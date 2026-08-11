@@ -16,9 +16,11 @@ permissions:
   pages: write
   id-token: write
 
+# Queue rather than cancel: a cancelled run publishes nothing to the dashboard,
+# and serialising also keeps the history.json read-modify-write race-free.
 concurrency:
   group: playwright-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   test:
@@ -41,11 +43,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium
-
-      # continue-on-error so the dashboard still publishes and Slack still fires;
-      # the final step turns a test failure back into a failed job.
+      # continue-on-error keeps the job green: pass/fail is reported on the
+      # dashboard and in Slack, not as a red workflow run.
       - name: Run Playwright tests
         id: tests
         continue-on-error: true
@@ -99,8 +98,8 @@ jobs:
           REPORT_URL: ${{ steps.deployment.outputs.page_url || env.PAGES_URL }}
         run: node .github/scripts/slack-notify.mjs
 
-      - name: Fail the job if any test failed
-        if: ${{ steps.tests.outcome == 'failure' }}
+      - name: Summarise
+        if: ${{ !cancelled() }}
         run: |
-          echo "Playwright reported failures — see the dashboard and Slack message above."
-          exit 1
+          echo "Test outcome: ${{ steps.tests.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "Dashboard: $PAGES_URL" >> $GITHUB_STEP_SUMMARY

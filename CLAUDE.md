@@ -159,8 +159,11 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 [.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR,
 manual dispatch, and a **10-minute schedule** (`*/10 * * * *`) — roughly 144 runs a day
-against live production, so 200 runs of history covers about 33 hours. Tests run with `continue-on-error` so the
-report uploads and Slack fires before a final step fails the job.
+against live production, so 200 runs of history covers about 33 hours. Tests run with `continue-on-error` and the job is **left green even when tests fail** —
+this is a monitoring pipeline, not a gate. Pass/fail lives on the dashboard and in Slack.
+`concurrency.cancel-in-progress` is `false`: a cancelled run publishes nothing, and
+serialising keeps the history read-modify-write race-free. No browser is installed —
+the `request` fixture never launches one.
 
 [.github/scripts/slack-notify.mjs](.github/scripts/slack-notify.mjs) reads
 `test-results/results.json` and posts failures grouped by endpoint, each with project name,
