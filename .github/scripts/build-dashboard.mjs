@@ -15,7 +15,9 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const RESULTS_FILE = process.env.RESULTS_FILE ?? 'test-results/results.json';
 const CALLS_FILE = process.env.API_LOG_FILE ?? 'test-results/api-calls.ndjson';
 const SITE_DIR = process.env.SITE_DIR ?? 'site';
-const MAX_RUNS = Number(process.env.MAX_RUNS ?? 100);
+const MAX_RUNS = Number(process.env.MAX_RUNS ?? 200);
+/** Newest runs keep every call and body; older ones are thinned (see compact). */
+const DETAIL_RUNS = Number(process.env.DETAIL_RUNS ?? 30);
 
 const {
   GITHUB_SERVER_URL = 'https://github.com',
@@ -116,12 +118,36 @@ async function loadHistory() {
   }
 }
 
-const history = [run, ...(await loadHistory())].slice(0, MAX_RUNS);
+/**
+ * Keeping every response body for every run would make history.json tens of MB.
+ * The newest DETAIL_RUNS keep everything; past that a run keeps only its failed
+ * calls, and a fully green old run keeps none. Counts always survive, so the
+ * chart and stats stay accurate however far back the archive goes.
+ */
+function compact(runs) {
+  return runs.map((r, i) => {
+    if (i < DETAIL_RUNS) return { ...r, trimmed: false };
+    const calls = r.calls ?? [];
+    return {
+      ...r,
+      calls: calls.filter((c) => !c.ok),
+      callCount: r.callCount ?? calls.length,
+      trimmed: true,
+    };
+  });
+}
+
+const history = compact([run, ...(await loadHistory())].slice(0, MAX_RUNS));
 
 mkdirSync(SITE_DIR, { recursive: true });
 writeFileSync(
   join(SITE_DIR, 'history.json'),
-  JSON.stringify({ generatedAt: new Date().toISOString(), runs: history })
+  JSON.stringify({
+    generatedAt: new Date().toISOString(),
+    detailRuns: DETAIL_RUNS,
+    maxRuns: MAX_RUNS,
+    runs: history,
+  })
 );
 copyFileSync(join(HERE, '..', 'dashboard', 'index.html'), join(SITE_DIR, 'index.html'));
 

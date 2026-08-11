@@ -181,7 +181,7 @@ Published to `https://<owner>.github.io/<repo>/`, with the raw Playwright report
 `/report/`. Slack links to it.
 
 [.github/scripts/build-dashboard.mjs](.github/scripts/build-dashboard.mjs) merges the
-current run into `history.json` and keeps the last 100. **Previous history is fetched from
+current run into `history.json` and keeps the last 200 (`MAX_RUNS`). **Previous history is fetched from
 the live Pages URL** — there is no history branch. A 404 starts a fresh archive; any other
 fetch error aborts the build rather than silently replacing 100 runs with one. Each run is
 also uploaded as a `run-history` artifact so the archive is recoverable.
@@ -189,7 +189,16 @@ also uploaded as a `run-history` artifact so the archive is recoverable.
 Response bodies come from [tests/apiLog.ts](tests/apiLog.ts): every spec calls
 `recordApiCall(...)` after reading a response, appending NDJSON to
 `test-results/api-calls.ndjson`. Bodies are truncated to 800 chars — a successful `getPins`
-response is several MB — which keeps a run at roughly 30 KB and the full archive near 3 MB.
+response is several MB.
+
+Only the newest `DETAIL_RUNS` (30) keep every call; older runs keep just their failed
+calls, and old green runs keep none. Counts always survive, so the chart and stats stay
+accurate. That holds 200 runs at ~900 KB (~16 KB gzipped, which is what Pages serves).
+Without it, 200 runs of full bodies would be ~9 MB.
+
+The chart draws at most `CHART_RUNS` bars and the table `TABLE_ROWS` rows — past roughly
+200 bars the strip turns into an unreadable block, so raising `MAX_RUNS` means raising
+those caps deliberately, not automatically.
 
 [.github/dashboard/index.html](.github/dashboard/index.html) is a static page that fetches
 `history.json`; the build script only copies it. It needs a real HTTP server to test

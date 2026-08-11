@@ -152,7 +152,7 @@
   <div class="tiles" id="tiles"></div>
 
   <div class="card">
-    <h2>Last 100 runs</h2>
+    <h2 id="chart-title">Run history</h2>
     <div class="hint">Each bar is one CI run, split into passed and failed tests. Hover for detail; click to jump to that run below.</div>
     <div class="legend">
       <span><i class="swatch" style="background:var(--good)"></i> Passed</span>
@@ -197,12 +197,16 @@ const npt = (iso) => new Intl.DateTimeFormat('en-GB', {
 const secs = (ms) => ms ? (ms / 1000).toFixed(1) + 's' : '—';
 const kb = (n) => n == null ? '—' : n < 1024 ? n + ' B' : (n / 1024).toFixed(0) + ' KB';
 
+const CHART_RUNS = 200;
+const TABLE_ROWS = 200;
 let RUNS = [];
+let META = {};
 
 fetch('./history.json', { cache: 'no-store' })
   .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
   .then((data) => {
     RUNS = data.runs ?? [];
+    META = data;
     document.getElementById('generated').textContent =
       RUNS.length ? 'Updated ' + npt(data.generatedAt) + ' NPT · ' + RUNS.length + ' runs tracked' : '';
     render();
@@ -216,6 +220,9 @@ function render() {
   if (!RUNS.length) return;
   renderHeadline();
   renderTiles();
+  document.getElementById('chart-title').textContent = RUNS.length > CHART_RUNS
+    ? 'Last ' + CHART_RUNS + ' of ' + RUNS.length + ' runs'
+    : 'Last ' + RUNS.length + ' runs';
   renderChart();
   renderRuns();
   showRun(0);
@@ -258,7 +265,7 @@ function renderTiles() {
 }
 
 function renderChart() {
-  const series = [...RUNS].reverse();           // oldest → newest, left → right
+  const series = RUNS.slice(0, CHART_RUNS).reverse();   // oldest → newest, left → right
   const W = 1000, H = 120, GAP = 2, PAD = 2;
   const slot = W / Math.max(series.length, 1);
   const bw = Math.max(2, Math.min(11, slot - GAP));
@@ -270,7 +277,7 @@ function renderChart() {
     const h = ((r.total || 0) / maxTotal) * (H - PAD);
     const failH = r.total ? (r.failed / r.total) * h : 0;
     const passH = Math.max(0, h - failH - (failH > 0 ? GAP : 0));
-    const idx = RUNS.indexOf(r);
+    const idx = series.length - 1 - i;
 
     let out = '';
     if (passH > 0) {
@@ -316,7 +323,7 @@ function renderChart() {
 }
 
 function renderRuns() {
-  document.querySelector('#runs tbody').innerHTML = RUNS.map((r, i) => {
+  document.querySelector('#runs tbody').innerHTML = RUNS.slice(0, TABLE_ROWS).map((r, i) => {
     const ok = r.failed === 0;
     return '<tr class="runrow" data-i="' + i + '">' +
       '<td class="num">' + (r.number ? '#' + esc(r.number) : '—') + '</td>' +
@@ -327,6 +334,12 @@ function renderRuns() {
       '<td class="num">' + secs(r.durationMs) + '</td>' +
       '<td>' + (r.url ? '<a href="' + esc(r.url) + '">CI ↗</a>' : '') + '</td></tr>';
   }).join('');
+
+  if (RUNS.length > TABLE_ROWS) {
+    document.querySelector('#runs tbody').insertAdjacentHTML('beforeend',
+      '<tr><td colspan="6" class="empty">Showing the newest ' + TABLE_ROWS + ' of ' +
+      RUNS.length + ' runs.</td></tr>');
+  }
 
   document.querySelectorAll('.runrow').forEach((row) =>
     row.addEventListener('click', (e) => {
@@ -340,7 +353,8 @@ function showRun(i) {
   document.getElementById('detail-card').hidden = false;
   document.getElementById('detail-title').textContent =
     (r.number ? 'Run #' + r.number : 'Run') + ' · ' + npt(r.at) + ' NPT · ' +
-    r.passed + ' passed, ' + r.failed + ' failed';
+    r.passed + ' passed, ' + r.failed + ' failed' +
+    (r.trimmed && r.failed ? ' · failures only' : '');
 
   const calls = r.calls ?? [];
   document.querySelector('#calls tbody').innerHTML = calls.length
@@ -355,7 +369,9 @@ function showRun(i) {
         '<td><code>' + esc(c.method) + ' ' + esc(c.url) + '</code>' +
           '<details><summary>Response</summary><pre>' + esc(c.body || '(empty)') + '</pre></details>' +
         '</td></tr>').join('')
-    : '<tr><td colspan="6" class="empty">No API calls recorded for this run.</td></tr>';
+    : '<tr><td colspan="6" class="empty">' + (r.trimmed
+        ? 'Response detail for this run has been trimmed to save space — only failures are kept beyond the newest runs.'
+        : 'No API calls recorded for this run.') + '</td></tr>';
 }
 </script>
 </body>
