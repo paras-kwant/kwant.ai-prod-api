@@ -1,0 +1,103 @@
+name: Playwright API Tests
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # 06:00 UTC daily — these specs hit live production, so drift shows up here.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: playwright-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Run API tests
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The specs use the `request` fixture only, but the chromium project is
+      # configured, so keep the browser available.
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright tests
+        id: tests
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ vars.BASE_URL || 'https://app.kwant.ai' }}
+          KWANT_EMAIL: ${{ secrets.KWANT_EMAIL }}
+          KWANT_PASSWORD: ${{ secrets.KWANT_PASSWORD }}
+        run: npx playwright test
+
+      - name: Upload HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      - name: Upload raw results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-results-json
+          path: test-results/results.json
+          retention-days: 30
+
+      - name: Package report for GitHub Pages
+        if: ${{ !cancelled() }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: playwright-report/
+
+      - name: Notify Slack on failure
+        if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # Optional: set the Pages URL as a repo variable to get an
+          # "Open report" button in the Slack message.
+          REPORT_URL: ${{ vars.REPORT_URL }}
+        run: node .github/scripts/slack-notify.mjs
+
+      - name: Fail the job if any test failed
+        if: ${{ steps.tests.outcome == 'failure' }}
+        run: |
+          echo "Playwright reported failures — see the summary and Slack message above."
+          exit 1
+
+  publish-report:
+    name: Publish report
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    # Requires Settings -> Pages -> Source: GitHub Actions. Left non-blocking so
+    # a repo without Pages enabled still reports test results normally.
+    continue-on-error: true
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
