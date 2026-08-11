@@ -6,8 +6,9 @@ on:
   pull_request:
     branches: [main, master]
   schedule:
-    # 06:00 UTC daily — these specs hit live production, so drift shows up here.
-    - cron: '0 6 * * *'
+    # Every 10 minutes. GitHub cron is UTC-only, but a fixed interval lands the
+    # same way in any zone — NPT (UTC+05:45) sees :05, :15, :25 … past the hour.
+    - cron: '*/10 * * * *'
   workflow_dispatch:
 
 permissions:
