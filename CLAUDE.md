@@ -16,7 +16,6 @@ that hit production directly. Treat every run as traffic against a live system.
 npx playwright test                          # whole suite
 npx playwright test getPins                  # by filename substring
 npx playwright test -g "RSW Terminal E"      # by test title
-npx playwright test --grep-invert "15 days"  # skip the slow known-failure spec
 npx playwright test --reporter=list          # see per-test console.log output
 npx playwright show-report                   # HTML report, incl. full response bodies
 ```
@@ -31,8 +30,7 @@ Read from `.env` (gitignored) via `dotenv` in [playwright.config.ts](playwright.
 `BASE_URL`, `KWANT_EMAIL`, `KWANT_PASSWORD`. Copy `.env.example` to start.
 Specs read `process.env.KWANT_EMAIL!` directly and fail on a login assertion if unset.
 
-The GitHub Actions workflow has no `.env` and no secrets configured, so **CI currently
-fails at login**. Add repository secrets before relying on it.
+CI has no `.env`; it reads `KWANT_EMAIL` / `KWANT_PASSWORD` from repository secrets.
 
 ## API contract
 
@@ -159,8 +157,9 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 ## CI
 
-[.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR, a
-daily 06:00 UTC schedule, and manual dispatch. Tests run with `continue-on-error` so the
+[.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR,
+manual dispatch, and a **10-minute schedule** (`*/10 * * * *`) — roughly 144 runs a day
+against live production, so 200 runs of history covers about 33 hours. Tests run with `continue-on-error` so the
 report uploads and Slack fires before a final step fails the job.
 
 [.github/scripts/slack-notify.mjs](.github/scripts/slack-notify.mjs) reads
