@@ -1,4 +1,5 @@
 import { test, expect, request as apiRequest } from '@playwright/test';
+import { recordApiCall } from './apiLog';
 
 const LOGIN_URL = 'https://app.kwant.ai/api/login';
 const MOST_ACTIVE_TODAY_URL = 'https://app.kwant.ai/api/plan/mostActiveToday';
@@ -51,6 +52,7 @@ test.describe('mostActiveToday', () => {
 
   for (const project of PROJECTS) {
     test(`${project.name} (${project.id})`, async ({ request }, testInfo) => {
+      const startedAt = Date.now();
       const response = await request.get(MOST_ACTIVE_TODAY_URL, {
         headers: {
           'x-auth-token': token,
@@ -60,6 +62,17 @@ test.describe('mostActiveToday', () => {
 
       const status = response.status();
       const body = await response.text();
+
+      recordApiCall({
+        endpoint: 'mostActiveToday',
+        project: project.name,
+        projectId: project.id,
+        method: 'GET',
+        url: response.url(),
+        status,
+        ms: Date.now() - startedAt,
+        body,
+      });
 
       console.log(`${project.name} (${project.id}) -> HTTP ${status}`);
       await testInfo.attach(`${project.name} - HTTP ${status}`, {

@@ -1,4 +1,5 @@
 import { test, expect, request as apiRequest, APIRequestContext } from '@playwright/test';
+import { recordApiCall } from './apiLog';
 
 const LOGIN_URL = 'https://app.kwant.ai/api/login';
 const WORKERS_ON_PLAN_URL = 'https://app.kwant.ai/api/locationplan/workersOnPlan';
@@ -41,6 +42,7 @@ test.describe('workersOnPlan', () => {
       ).toBe(200);
       const planId = (await plan.json()).id;
 
+      const startedAt = Date.now();
       const response = await request.get(WORKERS_ON_PLAN_URL, {
         params: { planId },
         headers,
@@ -48,6 +50,17 @@ test.describe('workersOnPlan', () => {
 
       const status = response.status();
       const body = await response.text();
+
+      recordApiCall({
+        endpoint: 'workersOnPlan',
+        project: project.name,
+        projectId: project.id,
+        method: 'GET',
+        url: response.url(),
+        status,
+        ms: Date.now() - startedAt,
+        body,
+      });
 
       console.log(
         `${project.name} plan ${planId} : HTTP ${status}, ${body.length} bytes — ${body.slice(0, 200)}`

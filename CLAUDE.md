@@ -174,3 +174,27 @@ variables: `BASE_URL`, `REPORT_URL` (adds an "Open report" button).
 
 Passing `--reporter=list` on the CLI overrides the configured reporters and skips writing
 `results.json`, which the Slack script needs.
+
+## History dashboard
+
+Published to `https://<owner>.github.io/<repo>/`, with the raw Playwright report under
+`/report/`. Slack links to it.
+
+[.github/scripts/build-dashboard.mjs](.github/scripts/build-dashboard.mjs) merges the
+current run into `history.json` and keeps the last 100. **Previous history is fetched from
+the live Pages URL** — there is no history branch. A 404 starts a fresh archive; any other
+fetch error aborts the build rather than silently replacing 100 runs with one. Each run is
+also uploaded as a `run-history` artifact so the archive is recoverable.
+
+Response bodies come from [tests/apiLog.ts](tests/apiLog.ts): every spec calls
+`recordApiCall(...)` after reading a response, appending NDJSON to
+`test-results/api-calls.ndjson`. Bodies are truncated to 800 chars — a successful `getPins`
+response is several MB — which keeps a run at roughly 30 KB and the full archive near 3 MB.
+
+[.github/dashboard/index.html](.github/dashboard/index.html) is a static page that fetches
+`history.json`; the build script only copies it. It needs a real HTTP server to test
+locally (`file://` blocks the fetch):
+
+```bash
+node .github/scripts/build-dashboard.mjs && (cd site && python3 -m http.server 8899)
+```

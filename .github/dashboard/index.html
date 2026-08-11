@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kwant API — test history</title>
+<style>
+  :root {
+    color-scheme: light;
+    --plane:      #f9f9f7;
+    --surface:    #fcfcfb;
+    --ink:        #0b0b0b;
+    --ink-2:      #52514e;
+    --muted:      #898781;
+    --grid:       #e1e0d9;
+    --baseline:   #c3c2b7;
+    --border:     rgba(11,11,11,0.10);
+    --good:       #0ca30c;
+    --warning:    #fab219;
+    --critical:   #d03b3b;
+    --good-ink:   #006300;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --plane:    #0d0d0d;
+      --surface:  #1a1a19;
+      --ink:      #ffffff;
+      --ink-2:    #c3c2b7;
+      --muted:    #898781;
+      --grid:     #2c2c2a;
+      --baseline: #383835;
+      --border:   rgba(255,255,255,0.10);
+      --good-ink: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --plane:    #0d0d0d;
+    --surface:  #1a1a19;
+    --ink:      #ffffff;
+    --ink-2:    #c3c2b7;
+    --grid:     #2c2c2a;
+    --baseline: #383835;
+    --border:   rgba(255,255,255,0.10);
+    --good-ink: #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 32px 24px 64px;
+    background: var(--plane);
+    color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; }
+
+  header { display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap; margin-bottom: 4px; }
+  h1 { font-size: 22px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  .badge.ok   { color: var(--good-ink); }
+  .badge.bad  { color: var(--critical); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.ok { background: var(--good); }
+  .dot.bad { background: var(--critical); }
+
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 24px 0; }
+  .tile {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .tile .label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  .tile .value { font-size: 30px; font-weight: 640; margin-top: 4px; letter-spacing: -0.02em; }
+  .tile .note { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 18px 12px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 14px; font-weight: 620; margin: 0 0 2px; }
+  .card .hint { font-size: 12.5px; color: var(--muted); margin-bottom: 14px; }
+
+  .legend { display: flex; gap: 16px; font-size: 12.5px; color: var(--ink-2); margin-bottom: 10px; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+  #chart { position: relative; height: 132px; }
+  #chart svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  #chart rect.bar { cursor: pointer; }
+  #chart rect.hit { fill: transparent; cursor: pointer; }
+
+  .tip {
+    position: absolute; pointer-events: none; opacity: 0; transition: opacity .1s;
+    background: var(--surface); color: var(--ink);
+    border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 10px; font-size: 12.5px; white-space: nowrap;
+    box-shadow: 0 6px 20px rgba(0,0,0,.14); z-index: 5;
+  }
+  .tip b { font-weight: 620; }
+  .tip .row { color: var(--ink-2); }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px;
+       text-transform: uppercase; letter-spacing: 0.04em; padding: 8px 10px;
+       border-bottom: 1px solid var(--grid); }
+  td { padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align: top; }
+  tbody tr:last-child td { border-bottom: 0; }
+  .num { font-variant-numeric: tabular-nums; }
+  code, .mono {
+    font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink-2); word-break: break-all;
+  }
+  .pill {
+    display: inline-block; padding: 1px 7px; border-radius: 5px;
+    font: 600 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+    border: 1px solid var(--border);
+  }
+  .pill.ok  { color: var(--good-ink); }
+  .pill.bad { color: var(--critical); }
+
+  details { margin-top: 6px; }
+  summary { cursor: pointer; color: var(--ink-2); font-size: 12.5px; }
+  pre {
+    margin: 8px 0 0; padding: 10px; border-radius: 6px;
+    background: var(--plane); border: 1px solid var(--border);
+    font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    color: var(--ink-2); overflow-x: auto; max-height: 260px; white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .runrow { cursor: pointer; }
+  .runrow:hover { background: color-mix(in srgb, var(--ink) 3%, transparent); }
+  .scroll { overflow-x: auto; }
+  .empty { color: var(--muted); padding: 24px 0; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Kwant API — test history</h1>
+    <span id="headline"></span>
+  </header>
+  <div class="sub" id="generated"></div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <div class="card">
+    <h2>Last 100 runs</h2>
+    <div class="hint">Each bar is one CI run, split into passed and failed tests. Hover for detail; click to jump to that run below.</div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--good)"></i> Passed</span>
+      <span><i class="swatch" style="background:var(--critical)"></i> Failed</span>
+    </div>
+    <div id="chart"><div class="tip" id="tip"></div></div>
+  </div>
+
+  <div class="card">
+    <h2>Runs</h2>
+    <div class="hint">Newest first. Select a row to see every API call and its response.</div>
+    <div class="scroll">
+      <table id="runs">
+        <thead>
+          <tr><th>Run</th><th>When (NPT)</th><th>Branch</th><th>Result</th><th>Duration</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="card" id="detail-card" hidden>
+    <h2 id="detail-title"></h2>
+    <div class="hint">Every API call recorded for this run. Response bodies are truncated.</div>
+    <div class="scroll"><table id="calls">
+      <thead>
+        <tr><th>Endpoint</th><th>Project</th><th>Status</th><th class="num">Time</th><th class="num">Size</th><th>Request &amp; response</th></tr>
+      </thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+const npt = (iso) => new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'Asia/Kathmandu', dateStyle: 'medium', timeStyle: 'short', hour12: false,
+}).format(new Date(iso));
+
+const secs = (ms) => ms ? (ms / 1000).toFixed(1) + 's' : '—';
+const kb = (n) => n == null ? '—' : n < 1024 ? n + ' B' : (n / 1024).toFixed(0) + ' KB';
+
+let RUNS = [];
+
+fetch('./history.json', { cache: 'no-store' })
+  .then((r) => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)))
+  .then((data) => {
+    RUNS = data.runs ?? [];
+    document.getElementById('generated').textContent =
+      RUNS.length ? 'Updated ' + npt(data.generatedAt) + ' NPT · ' + RUNS.length + ' runs tracked' : '';
+    render();
+  })
+  .catch((err) => {
+    document.getElementById('generated').innerHTML =
+      '<span class="empty">No history yet (' + esc(err.message) + '). It appears after the first CI run.</span>';
+  });
+
+function render() {
+  if (!RUNS.length) return;
+  renderHeadline();
+  renderTiles();
+  renderChart();
+  renderRuns();
+  showRun(0);
+}
+
+function renderHeadline() {
+  const last = RUNS[0];
+  const ok = last.failed === 0;
+  document.getElementById('headline').innerHTML =
+    '<span class="badge ' + (ok ? 'ok' : 'bad') + '"><i class="dot ' + (ok ? 'ok' : 'bad') + '"></i>' +
+    (ok ? 'All passing' : last.failed + ' failing') + '</span>';
+}
+
+function renderTiles() {
+  const runs = RUNS.length;
+  const green = RUNS.filter((r) => r.failed === 0).length;
+  const rate = runs ? Math.round((green / runs) * 100) : 0;
+  const avg = RUNS.reduce((n, r) => n + (r.durationMs || 0), 0) / runs;
+
+  // Endpoints that failed at least once across the tracked window.
+  const flaky = new Map();
+  for (const r of RUNS) for (const c of r.calls ?? []) {
+    if (!c.ok) flaky.set(c.endpoint, (flaky.get(c.endpoint) ?? 0) + 1);
+  }
+  const worst = [...flaky.entries()].sort((a, b) => b[1] - a[1])[0];
+
+  const tiles = [
+    { label: 'Clean runs', value: rate + '%', note: green + ' of ' + runs + ' fully green' },
+    { label: 'Last run', value: RUNS[0].passed + '/' + RUNS[0].total, note: 'passed · ' + npt(RUNS[0].at) },
+    { label: 'Avg duration', value: secs(avg), note: 'across tracked runs' },
+    worst
+      ? { label: 'Most failures', value: worst[0], note: worst[1] + ' failed call(s)' }
+      : { label: 'Most failures', value: '—', note: 'no failures recorded' },
+  ];
+
+  document.getElementById('tiles').innerHTML = tiles.map((t) =>
+    '<div class="tile"><div class="label">' + esc(t.label) + '</div>' +
+    '<div class="value">' + esc(t.value) + '</div>' +
+    '<div class="note">' + esc(t.note) + '</div></div>').join('');
+}
+
+function renderChart() {
+  const series = [...RUNS].reverse();           // oldest → newest, left → right
+  const W = 1000, H = 120, GAP = 2, PAD = 2;
+  const slot = W / Math.max(series.length, 1);
+  const bw = Math.max(2, Math.min(11, slot - GAP));
+  const inset = (slot - bw) / 2;
+  const maxTotal = Math.max(...series.map((r) => r.total || 0), 1);
+
+  const bars = series.map((r, i) => {
+    const x = i * slot + inset;
+    const h = ((r.total || 0) / maxTotal) * (H - PAD);
+    const failH = r.total ? (r.failed / r.total) * h : 0;
+    const passH = Math.max(0, h - failH - (failH > 0 ? GAP : 0));
+    const idx = RUNS.indexOf(r);
+
+    let out = '';
+    if (passH > 0) {
+      out += '<rect class="bar" x="' + x + '" y="' + (H - passH) + '" width="' + bw +
+        '" height="' + passH + '" rx="2" fill="var(--good)"></rect>';
+    }
+    if (failH > 0) {
+      out += '<rect class="bar" x="' + x + '" y="' + (H - h) + '" width="' + bw +
+        '" height="' + failH + '" rx="2" fill="var(--critical)"></rect>';
+    }
+    out += '<rect class="hit" x="' + (i * slot) + '" y="0" width="' + slot + '" height="' + H +
+      '" data-i="' + idx + '"></rect>';
+    return out;
+  }).join('');
+
+  document.getElementById('chart').insertAdjacentHTML('afterbegin',
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" preserveAspectRatio="none" role="img" ' +
+    'aria-label="Passed and failed tests for the last ' + series.length + ' runs">' +
+    '<line x1="0" y1="' + H + '" x2="' + W + '" y2="' + H + '" stroke="var(--baseline)" stroke-width="1"/>' +
+    bars + '</svg>');
+
+  const chart = document.getElementById('chart');
+  const tip = document.getElementById('tip');
+  chart.addEventListener('mousemove', (e) => {
+    const hit = e.target.closest('.hit');
+    if (!hit) { tip.style.opacity = 0; return; }
+    const r = RUNS[+hit.dataset.i];
+    tip.innerHTML =
+      '<b>' + (r.number ? 'Run #' + esc(r.number) : esc(r.sha || 'run')) + '</b><br>' +
+      '<span class="row">' + npt(r.at) + ' NPT</span><br>' +
+      '<span class="row">' + r.passed + ' passed · ' + r.failed + ' failed · ' + secs(r.durationMs) + '</span>';
+    tip.style.opacity = 1;
+    const box = chart.getBoundingClientRect();
+    const x = e.clientX - box.left;
+    tip.style.left = Math.min(Math.max(x - 70, 0), box.width - 170) + 'px';
+    tip.style.top = '0px';
+  });
+  chart.addEventListener('mouseleave', () => { tip.style.opacity = 0; });
+  chart.addEventListener('click', (e) => {
+    const hit = e.target.closest('.hit');
+    if (hit) showRun(+hit.dataset.i);
+  });
+}
+
+function renderRuns() {
+  document.querySelector('#runs tbody').innerHTML = RUNS.map((r, i) => {
+    const ok = r.failed === 0;
+    return '<tr class="runrow" data-i="' + i + '">' +
+      '<td class="num">' + (r.number ? '#' + esc(r.number) : '—') + '</td>' +
+      '<td class="num">' + npt(r.at) + '</td>' +
+      '<td>' + esc(r.branch) + (r.sha ? ' <code>' + esc(r.sha) + '</code>' : '') + '</td>' +
+      '<td><span class="pill ' + (ok ? 'ok' : 'bad') + '">' +
+        (ok ? '✓ ' + r.passed + ' passed' : '✕ ' + r.failed + ' failed') + '</span></td>' +
+      '<td class="num">' + secs(r.durationMs) + '</td>' +
+      '<td>' + (r.url ? '<a href="' + esc(r.url) + '">CI ↗</a>' : '') + '</td></tr>';
+  }).join('');
+
+  document.querySelectorAll('.runrow').forEach((row) =>
+    row.addEventListener('click', (e) => {
+      if (e.target.tagName !== 'A') showRun(+row.dataset.i);
+    }));
+}
+
+function showRun(i) {
+  const r = RUNS[i];
+  if (!r) return;
+  document.getElementById('detail-card').hidden = false;
+  document.getElementById('detail-title').textContent =
+    (r.number ? 'Run #' + r.number : 'Run') + ' · ' + npt(r.at) + ' NPT · ' +
+    r.passed + ' passed, ' + r.failed + ' failed';
+
+  const calls = r.calls ?? [];
+  document.querySelector('#calls tbody').innerHTML = calls.length
+    ? calls.map((c) =>
+        '<tr><td><b>' + esc(c.endpoint) + '</b>' +
+          (c.variant ? '<br><span class="mono">' + esc(c.variant) + '</span>' : '') + '</td>' +
+        '<td>' + esc(c.project) + '<br><code>' + esc(c.projectId) + '</code></td>' +
+        '<td><span class="pill ' + (c.ok ? 'ok' : 'bad') + '">' +
+          (c.ok ? '✓ ' : '✕ ') + esc(c.status) + '</span></td>' +
+        '<td class="num">' + esc(c.ms) + ' ms</td>' +
+        '<td class="num">' + kb(c.bytes) + '</td>' +
+        '<td><code>' + esc(c.method) + ' ' + esc(c.url) + '</code>' +
+          '<details><summary>Response</summary><pre>' + esc(c.body || '(empty)') + '</pre></details>' +
+        '</td></tr>').join('')
+    : '<tr><td colspan="6" class="empty">No API calls recorded for this run.</td></tr>';
+}
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import { test, expect, request as apiRequest, APIRequestContext } from '@playwright/test';
+import { recordApiCall } from './apiLog';
 
 const LOGIN_URL = 'https://app.kwant.ai/api/login';
 const FLOOR_DETAIL_URL = 'https://app.kwant.ai/api/floorDetail';
@@ -107,6 +108,7 @@ test.describe('floorDetail', () => {
       expect(startDateTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/);
       expect(endDateTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/);
 
+      const startedAt = Date.now();
       const response = await request.post(FLOOR_DETAIL_URL, {
         params: { startDateTime, endDateTime },
         headers,
@@ -118,6 +120,17 @@ test.describe('floorDetail', () => {
 
       const status = response.status();
       const body = await response.text();
+
+      recordApiCall({
+        endpoint: 'floorDetail',
+        project: project.name,
+        projectId: project.id,
+        method: 'POST',
+        url: response.url(),
+        status,
+        ms: Date.now() - startedAt,
+        body,
+      });
 
       console.log(
         `${project.name} [${timeZone}] floor ${floorId} ` +

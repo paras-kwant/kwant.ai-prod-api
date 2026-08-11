@@ -1,4 +1,5 @@
 import { test, expect, request as apiRequest } from '@playwright/test';
+import { recordApiCall } from './apiLog';
 
 const LOGIN_URL = 'https://app.kwant.ai/api/login';
 const GET_PINS_URL = 'https://app.kwant.ai/api/plan/getPins';
@@ -113,6 +114,7 @@ test.describe('getPins', () => {
       expect(endDateTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/);
       expect(start.getTime()).toBeLessThan(end.getTime());
 
+      const startedAt = Date.now();
       const response = await request.post(GET_PINS_URL, {
         params: { startDateTime, endDateTime },
         headers,
@@ -126,6 +128,17 @@ test.describe('getPins', () => {
 
       const status = response.status();
       const body = await response.text();
+
+      recordApiCall({
+        endpoint: 'getPins',
+        project: project.name,
+        projectId: project.id,
+        method: 'POST',
+        url: response.url(),
+        status,
+        ms: Date.now() - startedAt,
+        body,
+      });
 
       console.log(
         `${project.name} (${project.id}) [${timeZone}] floor ${floorId} ` +

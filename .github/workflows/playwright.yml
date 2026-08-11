@@ -24,6 +24,11 @@ jobs:
     name: Run API tests
     timeout-minutes: 30
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
     steps:
       - uses: actions/checkout@v4
 
@@ -35,11 +40,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The specs use the `request` fixture only, but the chromium project is
-      # configured, so keep the browser available.
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
+      # continue-on-error so the dashboard still publishes and Slack still fires;
+      # the final step turns a test failure back into a failed job.
       - name: Run Playwright tests
         id: tests
         continue-on-error: true
@@ -49,6 +54,13 @@ jobs:
           KWANT_PASSWORD: ${{ secrets.KWANT_PASSWORD }}
         run: npx playwright test
 
+      - name: Build history dashboard
+        if: ${{ !cancelled() }}
+        run: |
+          node .github/scripts/build-dashboard.mjs
+          mkdir -p site/report
+          cp -r playwright-report/. site/report/ 2>/dev/null || true
+
       - name: Upload HTML report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
@@ -57,47 +69,37 @@ jobs:
           path: playwright-report/
           retention-days: 30
 
-      - name: Upload raw results
+      # Belt-and-braces copy of the archive, in case a deploy is ever lost.
+      - name: Upload run history
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-results-json
-          path: test-results/results.json
-          retention-days: 30
+          name: run-history
+          path: site/history.json
+          retention-days: 90
 
-      - name: Package report for GitHub Pages
+      - name: Package site for GitHub Pages
         if: ${{ !cancelled() }}
         uses: actions/upload-pages-artifact@v3
         with:
-          path: playwright-report/
+          path: site/
+
+      # Non-blocking: a repo without Pages enabled still reports test results.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
 
       - name: Notify Slack on failure
         if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # Optional: set the Pages URL as a repo variable to get an
-          # "Open report" button in the Slack message.
-          REPORT_URL: ${{ vars.REPORT_URL }}
+          REPORT_URL: ${{ steps.deployment.outputs.page_url || env.PAGES_URL }}
         run: node .github/scripts/slack-notify.mjs
 
       - name: Fail the job if any test failed
         if: ${{ steps.tests.outcome == 'failure' }}
         run: |
-          echo "Playwright reported failures — see the summary and Slack message above."
+          echo "Playwright reported failures — see the dashboard and Slack message above."
           exit 1
-
-  publish-report:
-    name: Publish report
-    needs: test
-    if: ${{ !cancelled() }}
-    runs-on: ubuntu-latest
-    # Requires Settings -> Pages -> Source: GitHub Actions. Left non-blocking so
-    # a repo without Pages enabled still reports test results normally.
-    continue-on-error: true
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
