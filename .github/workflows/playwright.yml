@@ -5,10 +5,9 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  schedule:
-    # Every 15 minutes. GitHub cron is UTC-only, but a fixed interval lands the
-    # same way in any zone — NPT (UTC+05:45) sees :00, :15, :30, :45 past the hour.
-    - cron: '*/15 * * * *'
+  # No cron here. A '*/15' schedule was tried and GitHub dropped most of it —
+  # 8 expected runs in a window delivered 1. The 15-minute cadence now comes
+  # from ticker.yml, which dispatches this workflow on each quarter-hour.
   workflow_dispatch:
 
 permissions:

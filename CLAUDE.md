@@ -157,13 +157,37 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 ## CI
 
-[.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR,
-manual dispatch, and a **15-minute schedule** (`*/15 * * * *`) — roughly 96 runs a day
-against live production, so 200 runs of history covers about 50 hours. Tests run with `continue-on-error` and the job is **left green even when tests fail** —
+[.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR and
+dispatch — roughly 96 runs a day against live production, so 200 runs of history covers
+about 50 hours. Tests run with `continue-on-error` and the job is **left green even when tests fail** —
 this is a monitoring pipeline, not a gate. Pass/fail lives on the dashboard and in Slack.
 `concurrency.cancel-in-progress` is `false`: a cancelled run publishes nothing, and
 serialising keeps the history read-modify-write race-free. No browser is installed —
 the `request` fixture never launches one.
+
+### Why the 15-minute cadence is not a cron
+
+`playwright.yml` carried `schedule: '*/15 * * * *'` and GitHub **dropped** most of it:
+over a measured 1h54m window, 8 expected runs produced 1, itself ~10 min late. GitHub's
+`schedule` is best-effort and the lowest-priority event; high-frequency crons are discarded
+rather than queued. This is not fixable from the workflow file.
+
+[.github/workflows/ticker.yml](.github/workflows/ticker.yml) drives the cadence instead. It
+holds a runner for ~55 minutes, sleeping to each `:00/:15/:30/:45` boundary and firing
+`gh workflow run playwright.yml`, then re-dispatches **itself**. The chain, not a cron, is
+what keeps the interval. Notes for anyone changing it:
+
+- `workflow_dispatch` and `repository_dispatch` are the only two events `GITHUB_TOKEN` may
+  trigger from inside a run, so no PAT is needed. Any other event would need one.
+- Its `cron: '0 * * * *'` is a **recovery net** for a chain broken by a dead runner, not the
+  schedule. Don't read it as the real cadence.
+- `concurrency: ticker` is load-bearing. GitHub keeps at most one *pending* run per group
+  and cancels the rest, which is what stops the cron net and the self-rearm from compounding
+  into overlapping tickers that double-fire the suite.
+- Sleeping to the next boundary rather than a flat `sleep 900` keeps runs pinned to the
+  clock across re-arms, instead of drifting by each run's start offset.
+- The ticker needs no checkout, so `gh` cannot infer the repo from a git remote — hence
+  `GH_REPO`.
 
 [.github/scripts/slack-notify.mjs](.github/scripts/slack-notify.mjs) reads
 `test-results/results.json` and posts failures grouped by endpoint, each with project name,
