@@ -5,7 +5,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  schedule:
+  # schedule:
     # Every 10 minutes. GitHub cron is UTC-only, but a fixed interval lands the
     # same way in any zone — NPT (UTC+05:45) sees :05, :15, :25 … past the hour.
     # - cron: '*/10 * * * *'
