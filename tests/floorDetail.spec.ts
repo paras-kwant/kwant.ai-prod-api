@@ -103,6 +103,7 @@ test.describe('floorDetail', () => {
         `${project.name}: no active plan — ${(await plan.text()).slice(0, 200)}`
       ).toBe(200);
       const floorId = (await plan.json()).id;
+      testInfo.annotations.push({ type: 'floorId', description: String(floorId) });
 
       const { startDateTime, endDateTime } = windowFor(timeZone);
       expect(startDateTime).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00Z$/);
@@ -125,6 +126,7 @@ test.describe('floorDetail', () => {
         endpoint: 'floorDetail',
         project: project.name,
         projectId: project.id,
+        floorId,
         method: 'POST',
         url: response.url(),
         status,
@@ -136,7 +138,7 @@ test.describe('floorDetail', () => {
         `${project.name} [${timeZone}] floor ${floorId} ` +
           `${startDateTime} -> ${endDateTime} : HTTP ${status}`
       );
-      await testInfo.attach(`${project.name} - HTTP ${status}`, {
+      await testInfo.attach(`${project.name} floor ${floorId} - HTTP ${status}`, {
         body,
         contentType: 'application/json',
       });

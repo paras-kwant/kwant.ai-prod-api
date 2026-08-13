@@ -105,6 +105,7 @@ test.describe('getPins', () => {
         `${project.name}: could not resolve a plan — ${(await plan.text()).slice(0, 300)}`
       ).toBe(200);
       const floorId = (await plan.json()).id;
+      testInfo.annotations.push({ type: 'floorId', description: String(floorId) });
 
       const { start, end } = windowFor(timeZone);
       const startDateTime = isoMinuteUtc(start);
@@ -133,6 +134,7 @@ test.describe('getPins', () => {
         endpoint: 'getPins',
         project: project.name,
         projectId: project.id,
+        floorId,
         method: 'POST',
         url: response.url(),
         status,
@@ -144,7 +146,7 @@ test.describe('getPins', () => {
         `${project.name} (${project.id}) [${timeZone}] floor ${floorId} ` +
           `${startDateTime} -> ${endDateTime} : HTTP ${status}`
       );
-      await testInfo.attach(`${project.name} - HTTP ${status}`, {
+      await testInfo.attach(`${project.name} floor ${floorId} - HTTP ${status}`, {
         body,
         contentType: 'application/json',
       });
@@ -152,7 +154,8 @@ test.describe('getPins', () => {
       expect(
         [200, 201],
         `${project.name} (${project.id}) returned HTTP ${status}\n${response.url()}\n` +
-          `window ${startDateTime} -> ${endDateTime} (${WINDOW_MODE}, ${timeZone})\n` +
+          `floorId ${floorId}, window ${startDateTime} -> ${endDateTime} ` +
+          `(${WINDOW_MODE}, ${timeZone})\n` +
           body.slice(0, 500)
       ).toContain(status);
     });

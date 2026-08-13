@@ -167,7 +167,7 @@
     <div class="scroll">
       <table id="runs">
         <thead>
-          <tr><th>Run</th><th>When (NPT)</th><th>Branch</th><th>Result</th><th>Duration</th><th></th></tr>
+          <tr><th>Run</th><th id="when-heading">When</th><th>Branch</th><th>Result</th><th>Duration</th><th></th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -190,8 +190,17 @@
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
-const npt = (iso) => new Intl.DateTimeFormat('en-GB', {
-  timeZone: 'Asia/Kathmandu', dateStyle: 'medium', timeStyle: 'short', hour12: false,
+/**
+ * Run times render in whoever is looking's own zone — no timeZone option, so Intl
+ * uses the browser's. TZ is the short label for it ("GMT+5:45", "EDT", "CST"),
+ * resolved once at load so every timestamp on the page is labelled consistently.
+ */
+const TZ = new Intl.DateTimeFormat('en-GB', { timeZoneName: 'short' })
+  .formatToParts(new Date()).find((p) => p.type === 'timeZoneName')?.value
+  ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+
+const when = (iso) => new Intl.DateTimeFormat('en-GB', {
+  dateStyle: 'medium', timeStyle: 'short', hour12: false,
 }).format(new Date(iso));
 
 const secs = (ms) => ms ? (ms / 1000).toFixed(1) + 's' : '—';
@@ -208,7 +217,8 @@ fetch('./history.json', { cache: 'no-store' })
     RUNS = data.runs ?? [];
     META = data;
     document.getElementById('generated').textContent =
-      RUNS.length ? 'Updated ' + npt(data.generatedAt) + ' NPT · ' + RUNS.length + ' runs tracked' : '';
+      RUNS.length ? 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked' : '';
+    document.getElementById('when-heading').textContent = 'When (' + TZ + ')';
     render();
   })
   .catch((err) => {
@@ -251,7 +261,7 @@ function renderTiles() {
 
   const tiles = [
     { label: 'Clean runs', value: rate + '%', note: green + ' of ' + runs + ' fully green' },
-    { label: 'Last run', value: RUNS[0].passed + '/' + RUNS[0].total, note: 'passed · ' + npt(RUNS[0].at) },
+    { label: 'Last run', value: RUNS[0].passed + '/' + RUNS[0].total, note: 'passed · ' + when(RUNS[0].at) },
     { label: 'Avg duration', value: secs(avg), note: 'across tracked runs' },
     worst
       ? { label: 'Most failures', value: worst[0], note: worst[1] + ' failed call(s)' }
@@ -307,7 +317,7 @@ function renderChart() {
     const r = RUNS[+hit.dataset.i];
     tip.innerHTML =
       '<b>' + (r.number ? 'Run #' + esc(r.number) : esc(r.sha || 'run')) + '</b><br>' +
-      '<span class="row">' + npt(r.at) + ' NPT</span><br>' +
+      '<span class="row">' + when(r.at) + ' ' + TZ + '</span><br>' +
       '<span class="row">' + r.passed + ' passed · ' + r.failed + ' failed · ' + secs(r.durationMs) + '</span>';
     tip.style.opacity = 1;
     const box = chart.getBoundingClientRect();
@@ -327,7 +337,7 @@ function renderRuns() {
     const ok = r.failed === 0;
     return '<tr class="runrow" data-i="' + i + '">' +
       '<td class="num">' + (r.number ? '#' + esc(r.number) : '—') + '</td>' +
-      '<td class="num">' + npt(r.at) + '</td>' +
+      '<td class="num">' + when(r.at) + '</td>' +
       '<td>' + esc(r.branch) + (r.sha ? ' <code>' + esc(r.sha) + '</code>' : '') + '</td>' +
       '<td><span class="pill ' + (ok ? 'ok' : 'bad') + '">' +
         (ok ? '✓ ' + r.passed + ' passed' : '✕ ' + r.failed + ' failed') + '</span></td>' +
@@ -352,7 +362,7 @@ function showRun(i) {
   if (!r) return;
   document.getElementById('detail-card').hidden = false;
   document.getElementById('detail-title').textContent =
-    (r.number ? 'Run #' + r.number : 'Run') + ' · ' + npt(r.at) + ' NPT · ' +
+    (r.number ? 'Run #' + r.number : 'Run') + ' · ' + when(r.at) + ' ' + TZ + ' · ' +
     r.passed + ' passed, ' + r.failed + ' failed' +
     (r.trimmed && r.failed ? ' · failures only' : '');
 
@@ -361,7 +371,8 @@ function showRun(i) {
     ? calls.map((c) =>
         '<tr><td><b>' + esc(c.endpoint) + '</b>' +
           (c.variant ? '<br><span class="mono">' + esc(c.variant) + '</span>' : '') + '</td>' +
-        '<td>' + esc(c.project) + '<br><code>' + esc(c.projectId) + '</code></td>' +
+        '<td>' + esc(c.project) + '<br><code>' + esc(c.projectId) + '</code>' +
+          (c.floorId ? '<br><span class="mono">floor ' + esc(c.floorId) + '</span>' : '') + '</td>' +
         '<td><span class="pill ' + (c.ok ? 'ok' : 'bad') + '">' +
           (c.ok ? '✓ ' : '✕ ') + esc(c.status) + '</span></td>' +
         '<td class="num">' + esc(c.ms) + ' ms</td>' +

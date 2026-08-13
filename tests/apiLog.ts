@@ -8,6 +8,8 @@ export type ApiCall = {
   endpoint: string;
   project: string;
   projectId: string;
+  /** Plan id the call was scoped to. Resolved per project, so it varies run to run. */
+  floorId?: number | string;
   variant?: string;
   method: string;
   url: string;

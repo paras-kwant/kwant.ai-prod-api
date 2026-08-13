@@ -63,10 +63,23 @@ test.describe('mostActiveToday', () => {
       const status = response.status();
       const body = await response.text();
 
+      // The plan id every other spec builds its request from. Parsed defensively:
+      // a failing response body is not necessarily JSON.
+      let floorId = '';
+      try {
+        floorId = String(JSON.parse(body).id ?? '');
+      } catch {
+        // Left blank — the status assertion below reports the real problem.
+      }
+      if (floorId) {
+        testInfo.annotations.push({ type: 'floorId', description: floorId });
+      }
+
       recordApiCall({
         endpoint: 'mostActiveToday',
         project: project.name,
         projectId: project.id,
+        floorId,
         method: 'GET',
         url: response.url(),
         status,
@@ -74,15 +87,18 @@ test.describe('mostActiveToday', () => {
         body,
       });
 
-      console.log(`${project.name} (${project.id}) -> HTTP ${status}`);
-      await testInfo.attach(`${project.name} - HTTP ${status}`, {
+      console.log(
+        `${project.name} (${project.id}) floor ${floorId || 'unresolved'} -> HTTP ${status}`
+      );
+      await testInfo.attach(`${project.name} floor ${floorId || 'unresolved'} - HTTP ${status}`, {
         body,
         contentType: 'application/json',
       });
 
       expect(
         [200, 201],
-        `${project.name} (${project.id}) returned HTTP ${status}\n${response.url()}\n${body.slice(0, 500)}`
+        `${project.name} (${project.id}) returned HTTP ${status}\n${response.url()}\n` +
+          `floorId ${floorId || 'unresolved'}\n${body.slice(0, 500)}`
       ).toContain(status);
     });
   }

@@ -41,6 +41,7 @@ test.describe('workersOnPlan', () => {
         `${project.name}: no active plan — ${(await plan.text()).slice(0, 200)}`
       ).toBe(200);
       const planId = (await plan.json()).id;
+      testInfo.annotations.push({ type: 'floorId', description: String(planId) });
 
       const startedAt = Date.now();
       const response = await request.get(WORKERS_ON_PLAN_URL, {
@@ -55,6 +56,7 @@ test.describe('workersOnPlan', () => {
         endpoint: 'workersOnPlan',
         project: project.name,
         projectId: project.id,
+        floorId: planId,
         method: 'GET',
         url: response.url(),
         status,
@@ -65,7 +67,7 @@ test.describe('workersOnPlan', () => {
       console.log(
         `${project.name} plan ${planId} : HTTP ${status}, ${body.length} bytes — ${body.slice(0, 200)}`
       );
-      await testInfo.attach(`${project.name} - HTTP ${status}`, {
+      await testInfo.attach(`${project.name} plan ${planId} - HTTP ${status}`, {
         body,
         contentType: 'application/json',
       });
