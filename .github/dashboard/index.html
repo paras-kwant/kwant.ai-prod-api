@@ -139,10 +139,11 @@
   .scroll { overflow-x: auto; }
   .empty { color: var(--muted); padding: 24px 0; }
   a { color: inherit; }
-  .reportlink { margin-left: auto; font-size: 13px; color: var(--muted); text-decoration: none;
+  .reportlink, .siblinglink { font-size: 13px; color: var(--muted); text-decoration: none;
     border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 999px;
     padding: 5px 12px; white-space: nowrap; }
-  .reportlink:hover { color: var(--ink); }
+  .siblinglink { margin-left: auto; }
+  .reportlink:hover, .siblinglink:hover { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -150,8 +151,9 @@
   <header>
     <h1>Kwant API — test history</h1>
     <span id="headline"></span>
-    <!-- Relative on purpose: the page is published at /qa/ and its Playwright
-         report at /qa/report/, so this resolves wherever the site is mounted. -->
+    <!-- Relative on purpose: both copies of this page sit beside their own
+         report/ directory, so these resolve wherever the page is mounted. -->
+    <a class="siblinglink" href="./qa/"></a>
     <a class="reportlink" href="./report/">Playwright report ↗</a>
   </header>
   <div class="sub" id="generated"></div>
@@ -228,8 +230,11 @@ fetch('./history.json', { cache: 'no-store' })
         ? (data.frozenReason || 'Frozen archive.') + ' Last run ' + when(RUNS[0].at) + ' ' + TZ
           + ' · ' + RUNS.length + ' runs'
         : 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked';
-    // /prod/ carries no report directory, so drop the link rather than 404 it.
-    if (data.frozen) document.querySelector('.reportlink')?.remove();
+    // The frozen archive is published at the root and the live QA one at /qa/,
+    // so the path to the other is fixed by which of the two this is.
+    const sibling = document.querySelector('.siblinglink');
+    sibling.href = data.frozen ? './qa/' : '../';
+    sibling.textContent = data.frozen ? 'QA — live ↗' : 'Production archive ↗';
     document.getElementById('when-heading').textContent = 'When (' + TZ + ')';
     render();
   })

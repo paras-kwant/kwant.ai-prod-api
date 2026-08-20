@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "qa": "playwright test --grep @qa --reporter=list",
-    "qa:pipeline": "playwright test --grep @qa; SITE_DIR=site/qa node .github/scripts/build-dashboard.mjs && mkdir -p site/qa/report && cp -r playwright-report/. site/qa/report/ && printf '<!doctype html>\\n<meta charset=\"utf-8\">\\n<title>Kwant API — test history</title>\\n<meta http-equiv=\"refresh\" content=\"0; url=./qa/\">\\n<p><a href=\"./qa/\">Kwant API QA test history →</a></p>\\n' > site/index.html",
-    "qa:dashboard": "npm run qa:pipeline && echo '→ http://localhost:8899/qa/' && cd site && python3 -m http.server 8899",
+    "qa:pipeline": "playwright test --grep @qa; SITE_DIR=site/qa node .github/scripts/build-dashboard.mjs && mkdir -p site/qa/report && cp -r playwright-report/. site/qa/report/ && node .github/scripts/preserve-prod-archive.mjs",
+    "qa:dashboard": "npm run qa:pipeline && echo \"→ http://localhost:8899/qa/\" && cd site && python3 -m http.server 8899",
     "prod": "playwright test --grep-invert @qa --reporter=list"
   },
   "keywords": [],

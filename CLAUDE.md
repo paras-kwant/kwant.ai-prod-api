@@ -236,7 +236,7 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 | Workflow | Runs | Triggers | Publishes |
 | --- | --- | --- | --- |
-| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` dashboard + `/qa/report/` (+ frozen `/prod/`) |
+| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` dashboard + `/qa/report/`, and the frozen production pages at `/` + `/report/` |
 | [playwright.yml](.github/workflows/playwright.yml) | `--grep-invert @qa` (production specs) | `workflow_dispatch` only | nothing — report as an artifact |
 
 `qa.yml` is a copy of `playwright.yml` with the QA env, the tag filter and the `/qa`
@@ -252,12 +252,14 @@ two concurrent runs would each write back only their own. A run must finish insi
 manual production dispatch would delete the `/qa/` archive. It uploads `playwright-report/`
 as an artifact instead, and holds its own concurrency group.
 
-Its 85 historical runs stay readable at `/prod/` via
-[preserve-prod-archive.mjs](.github/scripts/preserve-prod-archive.mjs), which **every** QA
-build re-emits — again because a deploy replaces the whole site, so once is not enough. It
-reads `<root>/prod/history.json`, falls back to `<root>/history.json` on the first run, marks
-the copy `frozen: true` (the dashboard then shows a frozen banner and hides its report link,
-since no report files are carried over), and never fails the deploy if that fetch breaks.
+Its dashboard and last report stay at the **site root** (`/` and `/report/`), republished by
+[preserve-prod-archive.mjs](.github/scripts/preserve-prod-archive.mjs) on **every** QA build —
+again because a deploy replaces the whole site, so once is not enough. Both files are
+vendored in [.github/dashboard/prod-report/](.github/dashboard/prod-report/): the archive
+stopped changing when monitoring was retired, and re-fetching it from the live site would
+mean one failed request erases 85 runs for good (the deploy ships without them, the next
+build finds nothing to copy). `frozen: true` in that history is what makes the page show a
+frozen banner instead of an "Updated" line.
 
 Tests run with `continue-on-error` and the job is **left green even when tests fail** —
 this is a monitoring pipeline, not a gate. Pass/fail lives on the dashboard and in Slack.
@@ -310,9 +312,14 @@ Passing `--reporter=list` on the CLI overrides the configured reporters and skip
 
 ## History dashboard
 
-Published to `https://<owner>.github.io/<repo>/qa/`, with the raw Playwright report under
-`/qa/report/` and a link to it in the page header. The site root redirects to `/qa/`. Slack
-links to the dashboard.
+Two dashboards share one Pages site:
+
+| Path | Contents |
+| --- | --- |
+| `/` + `/report/` | production, frozen at its last run (2026-08-14, 85 runs) |
+| `/qa/` + `/qa/report/` | QA, live, refreshed every 15 minutes |
+
+Each page header links to the other and to its own Playwright report. Slack links to `/qa/`.
 
 The `/qa` subpath needs no code in the build script: `SITE_DIR=site/qa` sets where it writes
 and `PAGES_URL=<root>/qa` sets which archive it merges into, both already env-driven. The

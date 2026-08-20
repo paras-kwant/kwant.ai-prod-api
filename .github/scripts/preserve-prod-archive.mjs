@@ -1,62 +1,41 @@
 #!/usr/bin/env node
 /**
- * Re-emits the retired production archive under /prod/ so a QA deploy does not
- * delete it. A Pages deploy replaces the whole site, so this has to run on
- * every QA build, not once.
+ * Publishes production's frozen dashboard and report at the site root, beside
+ * the live QA ones at /qa/. A Pages deploy replaces the whole site, so every QA
+ * build re-emits this — once is not enough.
  *
- * Reads <root>/prod/history.json, falling back to <root>/history.json for the
- * first run (before /prod/ exists). Missing archive is fine — nothing to keep.
+ * Both files are vendored under .github/dashboard/prod-report/ rather than
+ * re-fetched from the live site. The archive stopped changing when production
+ * monitoring was retired, and fetching it would mean one failed request could
+ * erase 85 runs permanently: the deploy would ship without them, and the next
+ * build would find nothing to copy.
  */
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT_URL = (process.env.SITE_ROOT_URL ?? '').replace(/\/$/, '');
-const OUT_DIR = process.env.PROD_ARCHIVE_DIR ?? 'site/prod';
+const SOURCE = join(HERE, '..', 'dashboard', 'prod-report');
+const OUT_DIR = process.env.PROD_ARCHIVE_DIR ?? 'site';
 
-if (!ROOT_URL) {
-  console.log('SITE_ROOT_URL not set — skipping the production archive.');
+if (!existsSync(join(SOURCE, 'history.json'))) {
+  console.log('No vendored production archive — skipping.');
   process.exit(0);
 }
 
-async function fetchArchive(url) {
-  const response = await fetch(url, { headers: { 'cache-control': 'no-cache' } });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`HTTP ${response.status} from ${url}`);
-  return response.json();
-}
+mkdirSync(join(OUT_DIR, 'report'), { recursive: true });
+copyFileSync(join(SOURCE, 'history.json'), join(OUT_DIR, 'history.json'));
+copyFileSync(join(HERE, '..', 'dashboard', 'index.html'), join(OUT_DIR, 'index.html'));
+copyFileSync(join(SOURCE, 'index.html'), join(OUT_DIR, 'report', 'index.html'));
 
-let archive = null;
-try {
-  archive =
-    (await fetchArchive(`${ROOT_URL}/prod/history.json`)) ??
-    (await fetchArchive(`${ROOT_URL}/history.json`));
-} catch (error) {
-  // Never fail the QA deploy over the frozen copy; the previous one stays live
-  // only if this build republishes it, so say so loudly instead.
-  console.error(`Could not read the production archive: ${error.message}`);
-  console.error('Publishing without /prod/ — it will be missing from this deploy.');
-  process.exit(0);
-}
-
-if (!archive) {
-  console.log('No production archive to preserve.');
-  process.exit(0);
-}
-
-const runs = Array.isArray(archive) ? archive : (archive.runs ?? []);
-
-mkdirSync(OUT_DIR, { recursive: true });
+const { runs = [] } = JSON.parse(readFileSync(join(OUT_DIR, 'history.json'), 'utf8'));
 writeFileSync(
   join(OUT_DIR, 'history.json'),
   JSON.stringify({
-    ...(Array.isArray(archive) ? {} : archive),
-    runs,
+    ...JSON.parse(readFileSync(join(SOURCE, 'history.json'), 'utf8')),
     frozen: true,
     frozenReason: 'Production monitoring retired — this archive no longer updates.',
   })
 );
-copyFileSync(join(HERE, '..', 'dashboard', 'index.html'), join(OUT_DIR, 'index.html'));
 
-console.log(`Preserved ${runs.length} production run(s) at /prod/.`);
+console.log(`Published ${runs.length} frozen production run(s) at the site root.`);

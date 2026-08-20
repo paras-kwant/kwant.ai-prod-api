@@ -70,10 +70,10 @@ jobs:
           QA_TIME_ZONE: ${{ vars.QA_TIME_ZONE || 'America/Chicago' }}
         run: npx playwright test --grep @qa
 
-      # SITE_DIR and PAGES_URL are env-driven, so /qa needs no script change: the
-      # build merges into <root>/qa/history.json and writes site/qa/. The frozen
-      # production archive is republished each time because a Pages deploy
-      # replaces the entire site.
+      # Site layout: / is production's frozen dashboard and report, /qa/ is this
+      # suite's live ones. SITE_DIR and PAGES_URL are env-driven, so /qa needs no
+      # script change — the build merges into <root>/qa/history.json. The frozen
+      # root is republished every time because a deploy replaces the whole site.
       - name: Build history dashboard
         if: ${{ !cancelled() }}
         env:
@@ -83,13 +83,6 @@ jobs:
           mkdir -p site/qa/report
           cp -r playwright-report/. site/qa/report/ 2>/dev/null || true
           node .github/scripts/preserve-prod-archive.mjs
-          cat > site/index.html <<'HTML'
-          <!doctype html>
-          <meta charset="utf-8">
-          <title>Kwant API — test history</title>
-          <meta http-equiv="refresh" content="0; url=./qa/">
-          <p><a href="./qa/">QA test history →</a> · <a href="./prod/">production archive (frozen)</a></p>
-          HTML
 
       - name: Upload HTML report
         if: ${{ !cancelled() }}
