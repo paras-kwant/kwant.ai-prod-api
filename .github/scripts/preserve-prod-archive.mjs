@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 /**
- * Publishes production's frozen dashboard and report at the site root, beside
- * the live QA ones at /qa/. A Pages deploy replaces the whole site, so every QA
- * build re-emits this — once is not enough.
+ * Publishes production's frozen dashboard and report at /prod/, beside the live
+ * QA ones at /qa/, plus the index page that lists both at the root. A Pages
+ * deploy replaces the whole site, so every QA build re-emits this — once is not
+ * enough.
  *
  * Both files are vendored under .github/dashboard/prod-report/ rather than
  * re-fetched from the live site. The archive stopped changing when production
@@ -15,27 +16,32 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(HERE, '..', 'dashboard', 'prod-report');
-const OUT_DIR = process.env.PROD_ARCHIVE_DIR ?? 'site';
+const DASHBOARD = join(HERE, '..', 'dashboard');
+const SOURCE = join(DASHBOARD, 'prod-report');
+const SITE_DIR = process.env.SITE_ROOT_DIR ?? 'site';
+const OUT_DIR = process.env.PROD_ARCHIVE_DIR ?? join(SITE_DIR, 'prod');
+
+// The root index lists both dashboards; it is not tied to the archive existing.
+mkdirSync(SITE_DIR, { recursive: true });
+copyFileSync(join(DASHBOARD, 'root.html'), join(SITE_DIR, 'index.html'));
 
 if (!existsSync(join(SOURCE, 'history.json'))) {
-  console.log('No vendored production archive — skipping.');
+  console.log('No vendored production archive — published the root index only.');
   process.exit(0);
 }
 
-mkdirSync(join(OUT_DIR, 'report'), { recursive: true });
-copyFileSync(join(SOURCE, 'history.json'), join(OUT_DIR, 'history.json'));
-copyFileSync(join(HERE, '..', 'dashboard', 'index.html'), join(OUT_DIR, 'index.html'));
-copyFileSync(join(SOURCE, 'index.html'), join(OUT_DIR, 'report', 'index.html'));
+const archive = JSON.parse(readFileSync(join(SOURCE, 'history.json'), 'utf8'));
 
-const { runs = [] } = JSON.parse(readFileSync(join(OUT_DIR, 'history.json'), 'utf8'));
+mkdirSync(join(OUT_DIR, 'report'), { recursive: true });
 writeFileSync(
   join(OUT_DIR, 'history.json'),
   JSON.stringify({
-    ...JSON.parse(readFileSync(join(SOURCE, 'history.json'), 'utf8')),
+    ...archive,
     frozen: true,
     frozenReason: 'Production monitoring retired — this archive no longer updates.',
   })
 );
+copyFileSync(join(DASHBOARD, 'index.html'), join(OUT_DIR, 'index.html'));
+copyFileSync(join(SOURCE, 'index.html'), join(OUT_DIR, 'report', 'index.html'));
 
-console.log(`Published ${runs.length} frozen production run(s) at the site root.`);
+console.log(`Published ${(archive.runs ?? []).length} frozen production run(s) at /prod/.`);

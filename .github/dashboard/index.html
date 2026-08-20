@@ -230,10 +230,10 @@ fetch('./history.json', { cache: 'no-store' })
         ? (data.frozenReason || 'Frozen archive.') + ' Last run ' + when(RUNS[0].at) + ' ' + TZ
           + ' · ' + RUNS.length + ' runs'
         : 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked';
-    // The frozen archive is published at the root and the live QA one at /qa/,
-    // so the path to the other is fixed by which of the two this is.
+    // Both dashboards are one level down (/prod/ and /qa/), so the sibling is a
+    // level up and across; which one depends on whether this copy is frozen.
     const sibling = document.querySelector('.siblinglink');
-    sibling.href = data.frozen ? './qa/' : '../';
+    sibling.href = data.frozen ? '../qa/' : '../prod/';
     sibling.textContent = data.frozen ? 'QA — live ↗' : 'Production archive ↗';
     document.getElementById('when-heading').textContent = 'When (' + TZ + ')';
     render();

@@ -236,7 +236,7 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 | Workflow | Runs | Triggers | Publishes |
 | --- | --- | --- | --- |
-| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` dashboard + `/qa/report/`, and the frozen production pages at `/` + `/report/` |
+| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` (live) + `/prod/` (frozen) + the root index |
 | [playwright.yml](.github/workflows/playwright.yml) | `--grep-invert @qa` (production specs) | `workflow_dispatch` only | nothing — report as an artifact |
 
 `qa.yml` is a copy of `playwright.yml` with the QA env, the tag filter and the `/qa`
@@ -252,7 +252,7 @@ two concurrent runs would each write back only their own. A run must finish insi
 manual production dispatch would delete the `/qa/` archive. It uploads `playwright-report/`
 as an artifact instead, and holds its own concurrency group.
 
-Its dashboard and last report stay at the **site root** (`/` and `/report/`), republished by
+Its dashboard and last report stay at **`/prod/`** (with `/prod/report/`), republished by
 [preserve-prod-archive.mjs](.github/scripts/preserve-prod-archive.mjs) on **every** QA build —
 again because a deploy replaces the whole site, so once is not enough. Both files are
 vendored in [.github/dashboard/prod-report/](.github/dashboard/prod-report/): the archive
@@ -316,8 +316,9 @@ Two dashboards share one Pages site:
 
 | Path | Contents |
 | --- | --- |
-| `/` + `/report/` | production, frozen at its last run (2026-08-14, 85 runs) |
+| `/` | index listing both, from [dashboard/root.html](.github/dashboard/root.html) |
 | `/qa/` + `/qa/report/` | QA, live, refreshed every 15 minutes |
+| `/prod/` + `/prod/report/` | production, frozen at its last run (2026-08-14, 85 runs) |
 
 Each page header links to the other and to its own Playwright report. Slack links to `/qa/`.
 

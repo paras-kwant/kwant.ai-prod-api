@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kwant API — test history</title>
+<style>
+  :root { --bg: #fbfbfa; --card: #fff; --ink: #1c1c1a; --muted: #6b6b66;
+    --line: #e6e4df; --good: #2f7d55; --frozen: #8a7a4a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16161a; --card: #1e1e23; --ink: #ecebe7; --muted: #9a9a94;
+      --line: #2f2f36; --good: #6fbf8f; --frozen: #cbb173; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 48px 20px; background: var(--bg); color: var(--ink);
+    font: 15px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 720px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 28px; }
+  .card { display: block; background: var(--card); border: 1px solid var(--line);
+    border-radius: 12px; padding: 18px 20px; margin-bottom: 14px;
+    text-decoration: none; color: inherit; }
+  .card:hover { border-color: color-mix(in srgb, var(--ink) 26%, transparent); }
+  .row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .name { font-weight: 600; }
+  .tag { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+    border: 1px solid currentColor; border-radius: 999px; padding: 2px 8px; }
+  .live { color: var(--good); }
+  .frozen { color: var(--frozen); }
+  .desc { color: var(--muted); font-size: 13px; margin-top: 6px; }
+  .desc code { font-size: 12px; }
+  .reports { margin-top: 10px; font-size: 13px; }
+  .reports a { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Kwant API — test history</h1>
+  <div class="sub">Playwright API suites run against the live Kwant API.</div>
+
+  <a class="card" href="./qa/">
+    <div class="row"><span class="name">QA</span><span class="tag live">live</span></div>
+    <div class="desc">
+      <code>qa.kwant.ai</code> — floorDetail and workersOnPlan, every 15 minutes.
+    </div>
+    <div class="reports">Dashboard · <a href="./qa/report/">Playwright report ↗</a></div>
+  </a>
+
+  <a class="card" href="./prod/">
+    <div class="row"><span class="name">Production</span><span class="tag frozen">frozen</span></div>
+    <div class="desc">
+      <code>app.kwant.ai</code> — 85 runs, ending 14 Aug 2026. Monitoring retired;
+      the suite still runs on demand.
+    </div>
+    <div class="reports">Dashboard · <a href="./prod/report/">Playwright report ↗</a></div>
+  </a>
+</div>
+</body>
+</html>
