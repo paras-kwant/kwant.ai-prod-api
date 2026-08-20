@@ -1,0 +1,63 @@
+name: QA Ticker
+
+# Same mechanism as the old ticker.yml, pointed at qa.yml. GitHub's `schedule`
+# event is best-effort and the lowest-priority trigger: a '*/15' cron is
+# routinely *dropped* rather than delayed, which on this repo delivered about
+# one run an hour. This workflow holds a runner for ~55 minutes instead,
+# dispatching the QA suite on each quarter-hour (:00 :15 :30 :45), then
+# re-dispatching itself. `workflow_dispatch` is one of the two events
+# GITHUB_TOKEN may still trigger, so the chain needs no PAT.
+#
+# The hourly cron is a recovery net only — it restarts the chain if a runner
+# dies mid-tick. It is not what provides the 15-minute cadence.
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+# One ticker at a time. GitHub keeps at most one *pending* run per concurrency
+# group and cancels any beyond that, so the cron net and the self-rearm cannot
+# compound into overlapping tickers double-firing the suite. The group name is
+# distinct from the retired production ticker's so the two can never share a
+# slot if that one is ever restored.
+concurrency:
+  group: qa-ticker
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: Dispatch the QA suite every 15 minutes
+    runs-on: ubuntu-latest
+    # An hour of ticking plus headroom; the job must outlive its own loop.
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # No checkout step, so gh cannot infer the repo from a git remote.
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Dispatch on each quarter-hour
+        env:
+          # Seconds between dispatches. Must divide 3600 so boundaries land on
+          # the same minutes every hour across re-arms.
+          INTERVAL: '900'
+        run: |
+          set -euo pipefail
+          # Stop short of a full hour so the re-armed ticker is already running
+          # before the boundary it is responsible for comes round.
+          deadline=$(( $(date +%s) + 3300 ))
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            now=$(date +%s)
+            # Sleep to the next :00/:15/:30/:45 rather than a fixed 900s, so the
+            # cadence stays pinned to the clock across re-arms.
+            sleep $(( (now / INTERVAL + 1) * INTERVAL - now ))
+            echo "Dispatching qa.yml at $(date -u +%FT%TZ)"
+            gh workflow run qa.yml --ref "${{ github.ref_name }}"
+          done
+
+      # Keeps the chain alive even if the loop above failed part way through.
+      - name: Re-arm the chain
+        if: ${{ !cancelled() }}
+        run: gh workflow run qa-ticker.yml --ref "${{ github.ref_name }}"

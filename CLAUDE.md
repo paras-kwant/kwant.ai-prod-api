@@ -5,15 +5,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Playwright **API** test suite (no browser, no UI) exercising the live production
-Kwant API at `https://app.kwant.ai/api`. There is no application code here — only specs
-that hit production directly. Treat every run as traffic against a live system.
+Kwant API at `https://app.kwant.ai/api`, plus two endpoints on QA at
+`https://qa.kwant.ai/api` (see [QA environment](#qa-environment)). There is no application
+code here — only specs that hit those environments directly. Treat every run as traffic
+against a live system.
 
 ## Commands
 
-`package.json` has no scripts; invoke Playwright directly.
+```bash
+npm run qa                                   # QA specs only — what CI runs
+npm run qa:pipeline                          # QA specs + build site/qa/ exactly as qa.yml does
+npm run qa:dashboard                         # the above, then serve it at localhost:8899/qa/
+npm run prod                                 # production specs only (live production traffic)
+```
+
+Or invoke Playwright directly:
 
 ```bash
-npx playwright test                          # whole suite
+npx playwright test                          # everything, QA and production
+npx playwright test --grep @qa               # QA only (the tag CI selects on)
+npx playwright test --grep-invert @qa        # production only
 npx playwright test getPins                  # by filename substring
 npx playwright test -g "RSW Terminal E"      # by test title
 npx playwright test --reporter=list          # see per-test console.log output
@@ -121,6 +132,70 @@ window and response body — the message renders only on failure. Full bodies go
 report via `testInfo.attach`; console output is truncated because a successful `getPins`
 body is several MB.
 
+## QA environment
+
+`https://qa.kwant.ai/api`, same API shape. **QA has its own credentials**:
+`QA_KWANT_EMAIL`/`QA_KWANT_PASSWORD`, required, with **no fallback** to the production
+`KWANT_*` pair — unset, the specs fail on a named assertion in `beforeAll` rather than
+logging in with production credentials. `qa.yml` reinforces that by not passing the
+`KWANT_*` secrets to the job at all.
+
+The two accounts are **not interchangeable**, and the failure is confusing: the production
+`support@ontargetcloud.com` logs into QA with HTTP 200 but is not authorized for the project
+below, so every call then returns `400 "User is not authorized to this resource"` — a login
+that works followed by uniform 400s means the wrong account, not a broken token. Use an
+account that can open the plan in the QA UI (`paras@kwant.ai` can).
+
+Two endpoints are covered, in their own specs because almost nothing carries over from the
+production ones:
+
+| Spec | Endpoint |
+| --- | --- |
+| [tests/qaFloorDetail.spec.ts](tests/qaFloorDetail.spec.ts) | `POST /api/floorDetail`, 15-day window |
+| [tests/qaWorkersOnPlan.spec.ts](tests/qaWorkersOnPlan.spec.ts) | `GET /api/locationplan/workersOnPlan` |
+
+- **Take the ids from the UI URL**, not from `GET /api/projects`:
+  `https://qa.kwant.ai/projects/7801174067/location/plan/7819255146` → project `7801174067`
+  ("Frontier Data Center Project", the same id it has in production — QA clones them), plan
+  `7819255146`. Overridable via `QA_PROJECT_ID` / `QA_PLAN_ID`, which must move together.
+- **`GET /api/projects` is a trap here.** It lists 20 projects, but that is not an access
+  list, the ids in it are unrelated 6–9 digit internal ids, and *none of them is the project
+  the UI shows*. Sweeping `workersOnPlan?planId=7819255146` across that list produced a
+  false positive — `110254569` answered 200 with `totalFloor: 30` and all-zero counts, which
+  looks like a match and is not one. The real project returns `worker_detail: 8562`.
+- `GET /api/plan/mostActiveToday` **does** resolve to `7819255146` under this project, so the
+  pin is a choice, not a workaround: the spec asserts a specific plan rather than whatever is
+  busiest today.
+- **`project-zone` returns `America/Chicago`** here, which is already the anchoring of the
+  captured URLs (`05:00Z -> 04:59Z`) — so `QA_TIME_ZONE` is left unset and the zone is
+  fetched. An IANA name in it forces a different zone; `FALLBACK_ZONE` covers only a failed
+  lookup. (An earlier note claimed `UTC`; that was the false-positive project.)
+- `QA_WINDOW_DAYS` (default **14**) sets the width; `QA_WINDOW_MODE` sets the anchoring.
+  14 is not a typo: the application's "last 15 days" filter sends a 14-day span. Captured
+  from the browser on 2026-08-20 (Chicago), the app requests
+  `startDateTime=2026-08-07T05:00:00Z&endDateTime=2026-08-21T04:59:00Z` — Aug 7 00:00
+  through Aug 20 23:59 local. The label counts boundaries, not days; the spec matches the
+  wire, not the label.
+  - `calendarDay` (default) — whole local days in the project's zone,
+    `midnight (today-13) -> 23:59 today` at 14 days. The **only** mode that can produce the
+    `05:00Z -> 04:59Z` boundaries the app sends, since those are local midnights. Its end is
+    the last minute of *today*, so it runs a few hours past the present instant. This mode
+    at 14 days is byte-identical to the app's own request.
+  - `rolling` — `now-14d -> now`, floored to the minute. Timezone-independent: "now" is one
+    instant everywhere, so `project-zone` does not affect the request at all in this mode.
+    It never reproduces the app's URLs, since those are midnight-anchored.
+- floorDetail returns the five `location_floor_details` module rows
+  (`worker_detail`, `company_detail`, `sensor_detail`, `zone_detail`, `gateway_detail`).
+  Both specs assert the shape, not the counts — the counts move. A 15-day window answers in
+  ~7s, unlike the `getPins` limit noted below.
+- Both specs are tagged **`@qa`** on their `describe`, which is how CI selects them:
+  `qa.yml` runs `--grep @qa`, `playwright.yml` runs `--grep-invert @qa`. Tagging beats
+  filtering on file names, which would need a case-sensitive match against
+  `qaFloorDetail.spec.ts` vs `floorDetail.spec.ts`.
+- The QA suite is the one **on a cadence** — see [CI](#ci). Slack and the dashboard label
+  these tests from the file name (`qaFloorDetail`, `qaWorkersOnPlan`) and from
+  `recordApiCall`'s `endpoint` (`qa floorDetail`, `qa workersOnPlan`).
+
 ## Known failures
 
 Both are server-side. The signature is the same in each case: HTTP 504 after ~15–16s with
@@ -157,13 +232,42 @@ cleanup; until then, a change to the date format must be applied in every spec.
 
 ## CI
 
-[.github/workflows/playwright.yml](.github/workflows/playwright.yml) runs on push, PR and
-dispatch — roughly 96 runs a day against live production, so 200 runs of history covers
-about 50 hours. Tests run with `continue-on-error` and the job is **left green even when tests fail** —
+**QA is what runs on a schedule; production is on-demand only.**
+
+| Workflow | Runs | Triggers | Publishes |
+| --- | --- | --- | --- |
+| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` dashboard + `/qa/report/` (+ frozen `/prod/`) |
+| [playwright.yml](.github/workflows/playwright.yml) | `--grep-invert @qa` (production specs) | `workflow_dispatch` only | nothing — report as an artifact |
+
+`qa.yml` is a copy of `playwright.yml` with the QA env, the tag filter and the `/qa`
+subpath swapped in. Roughly **96 QA runs a day**, so `MAX_RUNS` at 200 covers about 50
+hours; raise it (and `CHART_RUNS`/`TABLE_ROWS`) if you want more.
+
+`qa.yml` uses `concurrency: qa-playwright-<ref>`, and serialising is load-bearing: each run
+builds `history.json` by merging itself into the copy fetched from `/qa/history.json`, so
+two concurrent runs would each write back only their own. A run must finish inside the
+15-minute window; it takes about one.
+
+**Production no longer publishes to Pages.** A Pages deploy replaces the *entire* site, so a
+manual production dispatch would delete the `/qa/` archive. It uploads `playwright-report/`
+as an artifact instead, and holds its own concurrency group.
+
+Its 85 historical runs stay readable at `/prod/` via
+[preserve-prod-archive.mjs](.github/scripts/preserve-prod-archive.mjs), which **every** QA
+build re-emits — again because a deploy replaces the whole site, so once is not enough. It
+reads `<root>/prod/history.json`, falls back to `<root>/history.json` on the first run, marks
+the copy `frozen: true` (the dashboard then shows a frozen banner and hides its report link,
+since no report files are carried over), and never fails the deploy if that fetch breaks.
+
+Tests run with `continue-on-error` and the job is **left green even when tests fail** —
 this is a monitoring pipeline, not a gate. Pass/fail lives on the dashboard and in Slack.
-`concurrency.cancel-in-progress` is `false`: a cancelled run publishes nothing, and
-serialising keeps the history read-modify-write race-free. No browser is installed —
-the `request` fixture never launches one.
+No browser is installed — the `request` fixture never launches one.
+
+The production cadence was retired, not paused: `ticker.yml` was **deleted** and
+`playwright.yml` lost its `push`/`pull_request` triggers, so merging cannot fire traffic at
+production either. To bring it back, restore the file
+(`git show <commit>:.github/workflows/ticker.yml`) — or point a second ticker at
+`playwright.yml`, giving it its own `concurrency` group.
 
 ### Why the 15-minute cadence is not a cron
 
@@ -172,20 +276,21 @@ over a measured 1h54m window, 8 expected runs produced 1, itself ~10 min late. G
 `schedule` is best-effort and the lowest-priority event; high-frequency crons are discarded
 rather than queued. This is not fixable from the workflow file.
 
-[.github/workflows/ticker.yml](.github/workflows/ticker.yml) drives the cadence instead. It
-holds a runner for ~55 minutes, sleeping to each `:00/:15/:30/:45` boundary and firing
-`gh workflow run playwright.yml`, then re-dispatches **itself**. The chain, not a cron, is
-what keeps the interval. Notes for anyone changing it:
+[.github/workflows/qa-ticker.yml](.github/workflows/qa-ticker.yml) drives the cadence
+instead. It holds a runner for ~55 minutes, sleeping to each `:00/:15/:30/:45`
+boundary and firing `gh workflow run qa.yml`, then re-dispatches **itself**. The chain, not a
+cron, is what keeps the interval. Notes for anyone changing it:
 
 - `workflow_dispatch` and `repository_dispatch` are the only two events `GITHUB_TOKEN` may
   trigger from inside a run, so no PAT is needed. Any other event would need one.
 - Its `cron: '0 * * * *'` is a **recovery net** for a chain broken by a dead runner, not the
   schedule. Don't read it as the real cadence.
-- `concurrency: ticker` is load-bearing. GitHub keeps at most one *pending* run per group
+- `concurrency: qa-ticker` is load-bearing. GitHub keeps at most one *pending* run per group
   and cancels the rest, which is what stops the cron net and the self-rearm from compounding
   into overlapping tickers that double-fire the suite.
 - Sleeping to the next boundary rather than a flat `sleep 900` keeps runs pinned to the
-  clock across re-arms, instead of drifting by each run's start offset.
+  clock across re-arms, instead of drifting by each run's start offset. `INTERVAL` is the
+  one knob; keep it a divisor of 3600 or the boundaries wander from hour to hour.
 - The ticker needs no checkout, so `gh` cannot infer the repo from a git remote — hence
   `GH_REPO`.
 
@@ -195,16 +300,24 @@ project id, status code and the full request URL. It exits silently when everyth
 Project ids reach Slack through the **test titles** — `` test(`${project.name} (${project.id})`) `` —
 so keep that shape when adding specs.
 
-Required secrets: `KWANT_EMAIL`, `KWANT_PASSWORD`, `SLACK_WEBHOOK_URL`. Optional repo
-variables: `BASE_URL`, `REPORT_URL` (adds an "Open report" button).
+Required secrets: `QA_KWANT_EMAIL`, `QA_KWANT_PASSWORD` (the scheduled QA suite) and
+`SLACK_WEBHOOK_URL`; `KWANT_EMAIL`, `KWANT_PASSWORD` for the on-demand production suite.
+The two pairs are never both handed to the same job. Optional repo variables: `BASE_URL`,
+`QA_BASE_URL`, `QA_TIME_ZONE`, `REPORT_URL` (adds an "Open report" button).
 
 Passing `--reporter=list` on the CLI overrides the configured reporters and skips writing
 `results.json`, which the Slack script needs.
 
 ## History dashboard
 
-Published to `https://<owner>.github.io/<repo>/`, with the raw Playwright report under
-`/report/`. Slack links to it.
+Published to `https://<owner>.github.io/<repo>/qa/`, with the raw Playwright report under
+`/qa/report/` and a link to it in the page header. The site root redirects to `/qa/`. Slack
+links to the dashboard.
+
+The `/qa` subpath needs no code in the build script: `SITE_DIR=site/qa` sets where it writes
+and `PAGES_URL=<root>/qa` sets which archive it merges into, both already env-driven. The
+page fetches `./history.json` and links `./report/` relatively, so it works at any mount
+point. `npm run qa:pipeline` builds the identical tree locally.
 
 [.github/scripts/build-dashboard.mjs](.github/scripts/build-dashboard.mjs) merges the
 current run into `history.json` and keeps the last 200 (`MAX_RUNS`). **Previous history is fetched from

@@ -139,6 +139,10 @@
   .scroll { overflow-x: auto; }
   .empty { color: var(--muted); padding: 24px 0; }
   a { color: inherit; }
+  .reportlink { margin-left: auto; font-size: 13px; color: var(--muted); text-decoration: none;
+    border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 999px;
+    padding: 5px 12px; white-space: nowrap; }
+  .reportlink:hover { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -146,6 +150,9 @@
   <header>
     <h1>Kwant API — test history</h1>
     <span id="headline"></span>
+    <!-- Relative on purpose: the page is published at /qa/ and its Playwright
+         report at /qa/report/, so this resolves wherever the site is mounted. -->
+    <a class="reportlink" href="./report/">Playwright report ↗</a>
   </header>
   <div class="sub" id="generated"></div>
 
@@ -216,8 +223,13 @@ fetch('./history.json', { cache: 'no-store' })
   .then((data) => {
     RUNS = data.runs ?? [];
     META = data;
-    document.getElementById('generated').textContent =
-      RUNS.length ? 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked' : '';
+    document.getElementById('generated').textContent = !RUNS.length ? ''
+      : data.frozen
+        ? (data.frozenReason || 'Frozen archive.') + ' Last run ' + when(RUNS[0].at) + ' ' + TZ
+          + ' · ' + RUNS.length + ' runs'
+        : 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked';
+    // /prod/ carries no report directory, so drop the link rather than 404 it.
+    if (data.frozen) document.querySelector('.reportlink')?.remove();
     document.getElementById('when-heading').textContent = 'When (' + TZ + ')';
     render();
   })

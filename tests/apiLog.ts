@@ -2,7 +2,9 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
 const LOG_FILE = process.env.API_LOG_FILE ?? 'test-results/api-calls.ndjson';
-const MAX_BODY_CHARS = 800;
+// 800 keeps 200 runs of history at ~900 KB; the console log and HTML report
+// already carry the full body.
+const MAX_BODY_CHARS = Number(process.env.API_LOG_MAX_BODY || 800);
 
 export type ApiCall = {
   endpoint: string;

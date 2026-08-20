@@ -1,0 +1,138 @@
+name: Playwright QA API Tests
+
+# The QA counterpart of playwright.yml: same shape, but it runs only the specs
+# tagged @qa (tests/qa*.spec.ts) against https://qa.kwant.ai. This is the
+# workflow that is now on a cadence — qa-ticker.yml dispatches it every 15
+# minutes. playwright.yml (production) is dispatch-only.
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  # No cron here. GitHub drops most of a '*/15' schedule; the cadence comes
+  # from qa-ticker.yml, which dispatches this workflow on each quarter-hour.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Queue rather than cancel: a cancelled run publishes nothing, and serialising
+# is what keeps the /qa/history.json read-modify-write race-free — two runs
+# fetching the same archive concurrently would each write back only their own.
+# At a 10-minute cadence a run must therefore finish well inside 10 minutes; it
+# takes ~1.
+concurrency:
+  group: qa-playwright-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run QA API tests
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # The site root. The QA dashboard is published one level down, at /qa/,
+      # with its Playwright report at /qa/report/.
+      SITE_ROOT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+      PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/qa
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # continue-on-error keeps the job green: pass/fail is reported on the
+      # dashboard and in Slack, not as a red workflow run.
+      - name: Run QA Playwright tests
+        id: tests
+        continue-on-error: true
+        env:
+          QA_BASE_URL: ${{ vars.QA_BASE_URL || 'https://qa.kwant.ai' }}
+          # Required, and deliberately the only credentials this job gets: the
+          # KWANT_* production secrets are not passed in, so the QA suite cannot
+          # quietly authenticate with them. Unset, the specs fail on a named
+          # assertion rather than a confusing login error.
+          QA_KWANT_EMAIL: ${{ secrets.QA_KWANT_EMAIL }}
+          QA_KWANT_PASSWORD: ${{ secrets.QA_KWANT_PASSWORD }}
+          # Must not be a bare `${{ vars.X }}`: an unset variable arrives as an
+          # empty string, which the spec reads as "follow project-zone" (UTC),
+          # quietly changing the window shape in CI only.
+          QA_TIME_ZONE: ${{ vars.QA_TIME_ZONE || 'America/Chicago' }}
+        run: npx playwright test --grep @qa
+
+      # SITE_DIR and PAGES_URL are env-driven, so /qa needs no script change: the
+      # build merges into <root>/qa/history.json and writes site/qa/. The frozen
+      # production archive is republished each time because a Pages deploy
+      # replaces the entire site.
+      - name: Build history dashboard
+        if: ${{ !cancelled() }}
+        env:
+          SITE_DIR: site/qa
+        run: |
+          node .github/scripts/build-dashboard.mjs
+          mkdir -p site/qa/report
+          cp -r playwright-report/. site/qa/report/ 2>/dev/null || true
+          node .github/scripts/preserve-prod-archive.mjs
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>Kwant API — test history</title>
+          <meta http-equiv="refresh" content="0; url=./qa/">
+          <p><a href="./qa/">QA test history →</a> · <a href="./prod/">production archive (frozen)</a></p>
+          HTML
+
+      - name: Upload HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      # Belt-and-braces copy of the archive, in case a deploy is ever lost.
+      - name: Upload run history
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-history
+          path: site/qa/history.json
+          retention-days: 90
+
+      - name: Package site for GitHub Pages
+        if: ${{ !cancelled() }}
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      # Non-blocking: a repo without Pages enabled still reports test results.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Notify Slack on failure
+        if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          # The QA dashboard, not the site root — deploy-pages only reports the
+          # root, so append /qa to it.
+          REPORT_URL: ${{ steps.deployment.outputs.page_url && format('{0}qa/', steps.deployment.outputs.page_url) || format('{0}/', env.PAGES_URL) }}
+        run: node .github/scripts/slack-notify.mjs
+
+      - name: Summarise
+        if: ${{ !cancelled() }}
+        run: |
+          echo "QA test outcome: ${{ steps.tests.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "Dashboard: $PAGES_URL/" >> $GITHUB_STEP_SUMMARY
+          echo "Report: $PAGES_URL/report/" >> $GITHUB_STEP_SUMMARY

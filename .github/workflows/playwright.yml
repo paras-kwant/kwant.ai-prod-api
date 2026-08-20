@@ -1,0 +1,81 @@
+name: Playwright API Tests
+
+# On-demand only. Scheduled monitoring now runs the QA suite instead
+# (qa.yml, driven by qa-ticker.yml), so nothing dispatches this workflow on a
+# cadence. push/pull_request were removed too: merging should not fire traffic
+# at production. Run it by hand with `gh workflow run playwright.yml`.
+#
+# (A '*/15' schedule was tried here once and GitHub dropped most of it — 8
+# expected runs in a window delivered 1. See qa-ticker.yml.)
+on:
+  workflow_dispatch:
+
+# No pages/id-token: this workflow no longer deploys the site (see the note by
+# the report upload below).
+permissions:
+  contents: read
+
+# Its own group. It shares nothing with qa.yml now that it does not touch the
+# published archive, so a production dispatch need not queue behind a QA run.
+concurrency:
+  group: playwright-prod-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Run API tests
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # continue-on-error keeps the job green: pass/fail is reported on the
+      # dashboard and in Slack, not as a red workflow run.
+      - name: Run Playwright tests
+        id: tests
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ vars.BASE_URL || 'https://app.kwant.ai' }}
+          KWANT_EMAIL: ${{ secrets.KWANT_EMAIL }}
+          KWANT_PASSWORD: ${{ secrets.KWANT_PASSWORD }}
+        # The production specs only. The `qa` grep keeps tests/qa*.spec.ts out
+        # of this run so a production dispatch cannot also publish QA results
+        # over the QA history.
+        run: npx playwright test --grep-invert '@qa'
+
+      - name: Upload HTML report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 30
+
+      # This workflow deliberately does NOT publish to Pages. A Pages deploy
+      # replaces the entire site, so a manual production dispatch would delete
+      # the QA archive under /qa/ that qa.yml maintains every 10 minutes. The
+      # report is available as the artifact above; open it with
+      # `npx playwright show-report` after downloading, or run `npm run prod`
+      # locally. To restore publishing, give production its own subpath the way
+      # qa.yml does (SITE_DIR=site/prod, PAGES_URL=<root>/prod) and have both
+      # workflows emit the other's subtree — not just its own.
+
+      - name: Notify Slack on failure
+        if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: node .github/scripts/slack-notify.mjs
+
+      - name: Summarise
+        if: ${{ !cancelled() }}
+        run: |
+          echo "Test outcome: ${{ steps.tests.outcome }}" >> $GITHUB_STEP_SUMMARY
+          echo "Report: download the playwright-report artifact from this run" >> $GITHUB_STEP_SUMMARY
