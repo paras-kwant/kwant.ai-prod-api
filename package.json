@@ -5,9 +5,15 @@
   "main": "index.js",
   "scripts": {
     "qa": "playwright test --grep @qa --reporter=list",
-    "qa:pipeline": "playwright test --grep @qa; SITE_DIR=site/qa node .github/scripts/build-dashboard.mjs && mkdir -p site/qa/report && cp -r playwright-report/. site/qa/report/ && node .github/scripts/preserve-prod-archive.mjs",
+    "uat": "playwright test --grep @uat --reporter=list",
+    "prod": "playwright test --grep-invert \"@qa|@uat\" --reporter=list",
+    "suite:pipeline": ": \"${SUITE:?set SUITE=qa or SUITE=uat, or use npm run qa:pipeline / uat:pipeline}\"; playwright test --grep \"@$SUITE\"; node .github/scripts/build-dashboard.mjs && node .github/scripts/preserve-prod-archive.mjs",
+    "qa:pipeline": "SUITE=qa npm run suite:pipeline",
+    "uat:pipeline": "SUITE=uat npm run suite:pipeline",
+    "pipeline": "npm run qa:pipeline; npm run uat:pipeline",
+    "dashboard": "npm run pipeline && echo \"→ http://localhost:8899/\" && cd site && python3 -m http.server 8899",
     "qa:dashboard": "npm run qa:pipeline && echo \"→ http://localhost:8899/qa/\" && cd site && python3 -m http.server 8899",
-    "prod": "playwright test --grep-invert @qa --reporter=list"
+    "uat:dashboard": "npm run uat:pipeline && echo \"→ http://localhost:8899/uat/\" && cd site && python3 -m http.server 8899"
   },
   "keywords": [],
   "author": "",

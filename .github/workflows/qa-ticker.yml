@@ -1,0 +1,143 @@
+name: QA + UAT Ticker
+
+# Same mechanism as the old ticker.yml, pointed at qa.yml — which runs both the
+# QA and the UAT suite. GitHub's `schedule` event is best-effort and the
+# lowest-priority trigger: a '*/15' cron is routinely *dropped* rather than
+# delayed, which on this repo delivered about one run an hour. This workflow
+# holds a runner for ~55 minutes instead, dispatching the monitoring suite on
+# each quarter-hour it is awake for, then re-dispatching itself.
+# `workflow_dispatch` is one of the two events GITHUB_TOKEN may still trigger,
+# so the chain needs no PAT.
+#
+# The cadence is confined to a nightly window: **00:00-08:00 Asia/Kathmandu**,
+# so 00:00, 00:15 ... 07:45 — 32 dispatches a night. The *script* owns that
+# window, not the cron: WINDOW_TZ / WINDOW_START_HOUR / WINDOW_END_HOUR below are
+# its only definition, so moving the window or its zone needs no cron change.
+# GitHub's cron is UTC-only and could not express a +5:45 zone anyway.
+#
+# So the hourly cron now does two jobs: it starts the chain each night, and it
+# restarts one broken by a dead runner. Outside the window a triggered run exits
+# in seconds, which is what the 16 daytime ticks cost — the price of keeping the
+# window defined in exactly one place.
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+# One ticker at a time. GitHub keeps at most one *pending* run per concurrency
+# group and cancels any beyond that, so the cron and the self-rearm cannot
+# compound into overlapping tickers double-firing the suite. The group name is
+# distinct from the retired production ticker's so the two can never share a
+# slot if that one is ever restored.
+concurrency:
+  group: qa-ticker
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    name: Dispatch the QA and UAT suites every 15 min, 00:00-08:00 NPT
+    runs-on: ubuntu-latest
+    # An hour of ticking plus headroom; the job must outlive its own loop.
+    timeout-minutes: 70
+    env:
+      GH_TOKEN: ${{ github.token }}
+      # No checkout step, so gh cannot infer the repo from a git remote.
+      GH_REPO: ${{ github.repository }}
+      # Seconds between dispatches. Must divide 3600 so boundaries land on the
+      # same minutes every hour across re-arms.
+      INTERVAL: '900'
+      # The window, and the only place it is defined. END is exclusive: at 8 the
+      # last dispatch is 07:45. Nepal has no DST so this never shifts, and a zone
+      # that does is still handled — every check resolves the hour in the zone
+      # rather than caching an offset.
+      WINDOW_TZ: Asia/Kathmandu
+      WINDOW_START_HOUR: '0'
+      WINDOW_END_HOUR: '8'
+    steps:
+      - name: Dispatch on each quarter-hour inside the window
+        id: tick
+        # Not `-e`: a refused dispatch is handled inline, and the re-arm decision
+        # at the end must be reached even then.
+        run: |
+          set -uo pipefail
+
+          # Is this instant inside the window, in WINDOW_TZ? Base 10 is forced
+          # because `08` is an invalid octal literal in arithmetic context.
+          in_window() {
+            local hour
+            hour=$(TZ="$WINDOW_TZ" date -d "@$1" +%H)
+            [ "$((10#$hour))" -ge "$WINDOW_START_HOUR" ] &&
+              [ "$((10#$hour))" -lt "$WINDOW_END_HOUR" ]
+          }
+          stamp() { TZ="$WINDOW_TZ" date -d "@$1" +'%F %T %Z'; }
+
+          # Stop short of a full hour so the re-armed ticker is already running
+          # before the boundary it is responsible for comes round.
+          now=$(date +%s)
+          deadline=$(( now + 3300 ))
+
+          # Nothing to do unless some boundary inside this run's life is
+          # in-window. This is the daytime early exit, and it deliberately looks
+          # *ahead*: a run may start before the window opens and sleep into it,
+          # which is what covers a zone whose offset is not a whole hour. At
+          # +5:45 the 18:00 UTC tick starts at 23:45 NPT and dispatches from
+          # 00:00 — without the look-ahead the first three would be lost.
+          upcoming=''
+          probe=$(( (now / INTERVAL + 1) * INTERVAL ))
+          while [ "$probe" -le "$deadline" ]; do
+            if in_window "$probe"; then upcoming=$probe; break; fi
+            probe=$(( probe + INTERVAL ))
+          done
+
+          if [ -z "$upcoming" ]; then
+            echo "rearm=false" >> "$GITHUB_OUTPUT"
+            echo "$(stamp "$now") is outside ${WINDOW_START_HOUR}:00-${WINDOW_END_HOUR}:00 ${WINDOW_TZ} — nothing to dispatch."
+            exit 0
+          fi
+
+          echo "Window ${WINDOW_START_HOUR}:00-${WINDOW_END_HOUR}:00 ${WINDOW_TZ}; first dispatch $(stamp "$upcoming")."
+
+          dispatched=0
+          boundary=$(( (now / INTERVAL + 1) * INTERVAL ))
+          while [ "$boundary" -le "$deadline" ]; do
+            # Sleep to the boundary rather than a flat 900s, so the cadence stays
+            # pinned to the clock across re-arms instead of drifting by each
+            # run's start offset.
+            wait=$(( boundary - $(date +%s) ))
+            [ "$wait" -gt 0 ] && sleep "$wait"
+
+            if in_window "$boundary"; then
+              echo "Dispatching qa.yml at $(stamp "$boundary")"
+              # Non-fatal: one refused dispatch must not end the night's chain.
+              gh workflow run qa.yml --ref "${{ github.ref_name }}" ||
+                echo "::warning::gh workflow run failed at $(stamp "$boundary")"
+              dispatched=$(( dispatched + 1 ))
+            elif [ "$dispatched" -gt 0 ]; then
+              echo "Window closed at $(stamp "$boundary") — $dispatched dispatch(es) this run."
+              break
+            fi
+
+            boundary=$(( boundary + INTERVAL ))
+          done
+
+          # Re-arm only if a boundary in the next hour is still in-window.
+          # Unconditional re-arming would spin: outside the window every run
+          # would exit in seconds and immediately start another.
+          rearm=false
+          probe=$(date +%s)
+          horizon=$(( probe + 3600 ))
+          while [ "$probe" -le "$horizon" ]; do
+            if in_window "$probe"; then rearm=true; break; fi
+            probe=$(( probe + INTERVAL ))
+          done
+          echo "rearm=$rearm" >> "$GITHUB_OUTPUT"
+          echo "Re-arm: $rearm"
+
+      # Keeps the chain alive even if the loop above failed part way through.
+      # Skipped once the window is over — the hourly cron starts tomorrow's.
+      - name: Re-arm the chain
+        if: ${{ !cancelled() && steps.tick.outputs.rearm == 'true' }}
+        run: gh workflow run qa-ticker.yml --ref "${{ github.ref_name }}"

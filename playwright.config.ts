@@ -9,10 +9,23 @@ import path from 'path';
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 /**
+ * SUITE (`qa` | `uat`) keeps two suites apart when both run in one CI job: each
+ * gets its own results.json, HTML report and output dir, so the second run
+ * cannot clean away the first one's results before the dashboard is built.
+ * Unset — a plain `npx playwright test`, or the production suite — keeps the
+ * defaults, `test-results/` and `playwright-report/`.
+ */
+const SUITE = (process.env.SUITE ?? '').trim();
+const RESULTS_DIR = SUITE ? `results/${SUITE}` : 'test-results';
+const REPORT_DIR = SUITE ? `results/${SUITE}/report` : 'playwright-report';
+
+/**
  * See https://playwright.dev/docs/test-configuration.
  */
 export default defineConfig({
   testDir: './tests',
+  /* Clears the API call log before the run — see tests/globalSetup.ts. */
+  globalSetup: './tests/globalSetup.ts',
   /* Run tests in files in parallel */
   fullyParallel: true,
   /* Fail the build on CI if you accidentally left test.only in the source code. */
@@ -24,9 +37,11 @@ export default defineConfig({
   /* Reporter to use. See https://playwright.dev/docs/test-reporters */
   reporter: [
     ['list'],
-    ['html', { open: 'never' }],
-    ['json', { outputFile: 'test-results/results.json' }],
+    ['html', { open: 'never', outputFolder: REPORT_DIR }],
+    ['json', { outputFile: `${RESULTS_DIR}/results.json` }],
   ],
+  /* Left at the default (test-results/) unless SUITE partitions it. */
+  outputDir: SUITE ? `${RESULTS_DIR}/artifacts` : undefined,
   /* Shared settings for all the projects below. See https://playwright.dev/docs/api/class-testoptions. */
   use: {
     /* Base URL to use in actions like `await page.goto('')`. */

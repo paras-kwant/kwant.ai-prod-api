@@ -142,18 +142,24 @@
   .reportlink, .siblinglink { font-size: 13px; color: var(--muted); text-decoration: none;
     border: 1px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 999px;
     padding: 5px 12px; white-space: nowrap; }
-  .siblinglink { margin-left: auto; }
+  .siblings { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
   .reportlink:hover, .siblinglink:hover { color: var(--ink); }
+  /* Which environment this copy of the page is for. */
+  .envtag { font-size: 11.5px; font-weight: 650; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--ink-2); border: 1px solid var(--border);
+    border-radius: 999px; padding: 3px 9px; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <header>
     <h1>Kwant API — test history</h1>
+    <span class="envtag" id="envtag" hidden></span>
     <span id="headline"></span>
-    <!-- Relative on purpose: both copies of this page sit beside their own
-         report/ directory, so these resolve wherever the page is mounted. -->
-    <a class="siblinglink" href="./qa/"></a>
+    <!-- Relative on purpose: every copy of this page sits beside its own
+         report/ directory, so these resolve wherever the page is mounted. The
+         sibling links are filled in from history.json's `env`. -->
+    <span class="siblings" id="siblings"></span>
     <a class="reportlink" href="./report/">Playwright report ↗</a>
   </header>
   <div class="sub" id="generated"></div>
@@ -215,6 +221,13 @@ const when = (iso) => new Intl.DateTimeFormat('en-GB', {
 const secs = (ms) => ms ? (ms / 1000).toFixed(1) + 's' : '—';
 const kb = (n) => n == null ? '—' : n < 1024 ? n + ' B' : (n / 1024).toFixed(0) + ' KB';
 
+/** Every published dashboard, in the order they are listed at the site root. */
+const SITES = [
+  { key: 'qa', label: 'QA — live' },
+  { key: 'uat', label: 'UAT — live' },
+  { key: 'prod', label: 'Production archive' },
+];
+
 const CHART_RUNS = 200;
 const TABLE_ROWS = 200;
 let RUNS = [];
@@ -230,11 +243,17 @@ fetch('./history.json', { cache: 'no-store' })
         ? (data.frozenReason || 'Frozen archive.') + ' Last run ' + when(RUNS[0].at) + ' ' + TZ
           + ' · ' + RUNS.length + ' runs'
         : 'Updated ' + when(data.generatedAt) + ' ' + TZ + ' · ' + RUNS.length + ' runs tracked';
-    // Both dashboards are one level down (/prod/ and /qa/), so the sibling is a
-    // level up and across; which one depends on whether this copy is frozen.
-    const sibling = document.querySelector('.siblinglink');
-    sibling.href = data.frozen ? '../qa/' : '../prod/';
-    sibling.textContent = data.frozen ? 'QA — live ↗' : 'Production archive ↗';
+    // Every dashboard is mounted one level down (/qa/, /uat/, /prod/), so a
+    // sibling is one level up and across. `env` says which one this copy is;
+    // the vendored production archive predates that field, hence the fallback.
+    const here = data.env || (data.frozen ? 'prod' : 'qa');
+    const tag = document.getElementById('envtag');
+    tag.textContent = data.envLabel || here.toUpperCase();
+    tag.hidden = false;
+    document.getElementById('siblings').innerHTML = SITES
+      .filter((s) => s.key !== here)
+      .map((s) => '<a class="siblinglink" href="../' + s.key + '/">' + esc(s.label) + ' ↗</a>')
+      .join('');
     document.getElementById('when-heading').textContent = 'When (' + TZ + ')';
     render();
   })

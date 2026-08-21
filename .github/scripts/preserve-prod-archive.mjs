@@ -37,6 +37,8 @@ writeFileSync(
   join(OUT_DIR, 'history.json'),
   JSON.stringify({
     ...archive,
+    env: 'prod',
+    envLabel: 'Production',
     frozen: true,
     frozenReason: 'Production monitoring retired — this archive no longer updates.',
   })
