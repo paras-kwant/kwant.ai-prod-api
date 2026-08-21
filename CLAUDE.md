@@ -384,11 +384,18 @@ fail** — this is a monitoring pipeline, not a gate. The UAT step also carries
 Pass/fail lives on the dashboard and in Slack. No browser is installed — the `request`
 fixture never launches one.
 
-The production cadence was retired, not paused: `ticker.yml` was **deleted** and
-`playwright.yml` lost its `push`/`pull_request` triggers, so merging cannot fire traffic at
-production either. To bring it back, restore the file
-(`git show <commit>:.github/workflows/ticker.yml`) — or point a second ticker at
-`playwright.yml`, giving it its own `concurrency` group.
+The production cadence was retired, not paused: `ticker.yml` was **renamed to `ticker`** —
+dropping the extension, since GitHub only loads `.yml`/`.yaml` from `.github/workflows/`, so
+an extensionless file is not a workflow at all. That is this repo's off switch (`38e8f40`,
+and `97500f2` did the same to `qa-ticker.yml`), and it is invisible in a file listing unless
+you look at the extension. `playwright.yml` also lost its `push`/`pull_request` triggers, so
+merging cannot fire traffic at production either. To bring the cadence back, rename the file
+back — or point a second ticker at `playwright.yml`, giving it its own `concurrency` group.
+
+**`qa-ticker.yml` must keep its extension** while the cadence is wanted: without it the
+workflow never runs, and its own re-arm step (`gh workflow run qa-ticker.yml`) would target a
+name that does not resolve. Renaming it to `qa-ticker` is how to switch the nightly window
+off — but then nothing dispatches `qa.yml` at all, since that workflow is dispatch-only.
 
 ### Why the 15-minute cadence is not a cron
 
