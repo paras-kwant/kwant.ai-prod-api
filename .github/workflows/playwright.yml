@@ -1,6 +1,6 @@
 name: Playwright API Tests
 
-# On-demand only. Scheduled monitoring now runs the QA suite instead
+# On-demand only. Scheduled monitoring now runs the QA and UAT suites instead
 # (qa.yml, driven by qa-ticker.yml), so nothing dispatches this workflow on a
 # cadence. push/pull_request were removed too: merging should not fire traffic
 # at production. Run it by hand with `gh workflow run playwright.yml`.
@@ -46,10 +46,11 @@ jobs:
           BASE_URL: ${{ vars.BASE_URL || 'https://app.kwant.ai' }}
           KWANT_EMAIL: ${{ secrets.KWANT_EMAIL }}
           KWANT_PASSWORD: ${{ secrets.KWANT_PASSWORD }}
-        # The production specs only. The `qa` grep keeps tests/qa*.spec.ts out
-        # of this run so a production dispatch cannot also publish QA results
-        # over the QA history.
-        run: npx playwright test --grep-invert '@qa'
+        # The production specs only. Inverting both monitoring tags keeps
+        # tests/qa*.spec.ts and tests/uat*.spec.ts out of this run, so a
+        # production dispatch can neither hit those environments nor publish
+        # their results. A new tag must be added here as well as to qa.yml.
+        run: npx playwright test --grep-invert '@qa|@uat'
 
       - name: Upload HTML report
         if: ${{ !cancelled() }}
@@ -61,12 +62,12 @@ jobs:
 
       # This workflow deliberately does NOT publish to Pages. A Pages deploy
       # replaces the entire site, so a manual production dispatch would delete
-      # the QA archive under /qa/ that qa.yml maintains every 10 minutes. The
-      # report is available as the artifact above; open it with
+      # the live archives under /qa/ and /uat/ that qa.yml maintains every 15
+      # minutes. The report is available as the artifact above; open it with
       # `npx playwright show-report` after downloading, or run `npm run prod`
-      # locally. To restore publishing, give production its own subpath the way
-      # qa.yml does (SITE_DIR=site/prod, PAGES_URL=<root>/prod) and have both
-      # workflows emit the other's subtree — not just its own.
+      # locally. To restore publishing, move the production specs into qa.yml
+      # as a third SUITE (SUITE=prod, PAGES_URL=<root>/prod) — that is the only
+      # shape that keeps one deploy emitting every live subtree.
 
       - name: Notify Slack on failure
         if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}

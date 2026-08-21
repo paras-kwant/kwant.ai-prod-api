@@ -1,7 +1,12 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 
-const LOG_FILE = process.env.API_LOG_FILE ?? 'test-results/api-calls.ndjson';
+// Mirrors playwright.config.ts: SUITE partitions the log per suite so a QA and
+// a UAT run in the same job each build their own dashboard from their own calls.
+const SUITE = (process.env.SUITE ?? '').trim();
+export const LOG_FILE =
+  process.env.API_LOG_FILE ??
+  (SUITE ? `results/${SUITE}/api-calls.ndjson` : 'test-results/api-calls.ndjson');
 // 800 keeps 200 runs of history at ~900 KB; the console log and HTML report
 // already carry the full body.
 const MAX_BODY_CHARS = Number(process.env.API_LOG_MAX_BODY || 800);

@@ -1,16 +1,27 @@
-name: Playwright QA API Tests
+name: Playwright QA + UAT API Tests
 
-# The QA counterpart of playwright.yml: same shape, but it runs only the specs
-# tagged @qa (tests/qa*.spec.ts) against https://qa.kwant.ai. This is the
-# workflow that is now on a cadence — qa-ticker.yml dispatches it every 15
-# minutes. playwright.yml (production) is dispatch-only.
+# The scheduled monitoring workflow. It runs the @qa specs against
+# https://qa.kwant.ai and the @uat specs against https://uat.kwant.ai — the same
+# two endpoints, the same project and plan — and publishes a dashboard per
+# environment at /qa/ and /uat/. qa-ticker.yml dispatches it every 15 minutes
+# during a nightly window — 00:00-08:00 Asia/Kathmandu, 32 dispatches a night.
+# Production (playwright.yml) has no ticker at all; it is only ever run by hand.
+#
+# Both suites live in ONE workflow on purpose, and the file is still called
+# qa.yml because the ticker dispatches it by name. A Pages deploy replaces the
+# *entire* site, so whatever publishes has to emit every live subtree in the
+# same deploy: split across two workflows, each deploy would delete the other
+# environment's archive. For the same reason the suites are never selectable —
+# every run of this workflow builds both.
+#
+# `workflow_dispatch` is the only trigger. No cron: GitHub drops most of a
+# '*/15' schedule, so the cadence comes from qa-ticker.yml, which dispatches
+# this workflow on each quarter-hour inside the window. No push/pull_request
+# either — merging must not fire traffic at the monitored environments outside
+# it, the same rule playwright.yml follows for production. The consequence is
+# that a change to the specs, the dashboard or the build scripts does not reach
+# the site until the next nightly run; `gh workflow run qa.yml` publishes it now.
 on:
-  push:
-    branches: [main, master]
-  pull_request:
-    branches: [main, master]
-  # No cron here. GitHub drops most of a '*/15' schedule; the cadence comes
-  # from qa-ticker.yml, which dispatches this workflow on each quarter-hour.
   workflow_dispatch:
 
 permissions:
@@ -19,27 +30,27 @@ permissions:
   id-token: write
 
 # Queue rather than cancel: a cancelled run publishes nothing, and serialising
-# is what keeps the /qa/history.json read-modify-write race-free — two runs
-# fetching the same archive concurrently would each write back only their own.
-# At a 10-minute cadence a run must therefore finish well inside 10 minutes; it
-# takes ~1.
+# is what keeps the history.json read-modify-write race-free — two runs fetching
+# the same archive concurrently would each write back only their own. A run must
+# therefore finish inside the 15-minute window; two suites take ~2 minutes.
 concurrency:
   group: qa-playwright-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
   test:
-    name: Run QA API tests
+    name: Run QA and UAT API tests
     timeout-minutes: 30
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     env:
-      # The site root. The QA dashboard is published one level down, at /qa/,
-      # with its Playwright report at /qa/report/.
+      # The site root. Each dashboard is published one level down, with its own
+      # Playwright report beside it at <env>/report/.
       SITE_ROOT_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
-      PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/qa
+      QA_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/qa
+      UAT_PAGES_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/uat
     steps:
       - uses: actions/checkout@v4
 
@@ -51,58 +62,99 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # SUITE is what keeps the two runs apart: playwright.config.ts and
+      # tests/apiLog.ts write this suite's results, HTML report and API log
+      # under results/<suite>/, so the second run cannot clean away the first
+      # one's results before the dashboards are built.
+      #
       # continue-on-error keeps the job green: pass/fail is reported on the
       # dashboard and in Slack, not as a red workflow run.
       - name: Run QA Playwright tests
-        id: tests
+        id: qa-tests
         continue-on-error: true
         env:
+          SUITE: qa
           QA_BASE_URL: ${{ vars.QA_BASE_URL || 'https://qa.kwant.ai' }}
-          # Required, and deliberately the only credentials this job gets: the
-          # KWANT_* production secrets are not passed in, so the QA suite cannot
-          # quietly authenticate with them. Unset, the specs fail on a named
-          # assertion rather than a confusing login error.
+          # Required, and deliberately the only credentials this step gets: the
+          # KWANT_* production and UAT_* secrets are not passed in, so the QA
+          # suite cannot quietly authenticate with them. Unset, the specs fail
+          # on a named assertion rather than a confusing login error.
           QA_KWANT_EMAIL: ${{ secrets.QA_KWANT_EMAIL }}
           QA_KWANT_PASSWORD: ${{ secrets.QA_KWANT_PASSWORD }}
           # Must not be a bare `${{ vars.X }}`: an unset variable arrives as an
-          # empty string, which the spec reads as "follow project-zone" (UTC),
-          # quietly changing the window shape in CI only.
+          # empty string, which the spec reads as "follow project-zone", quietly
+          # changing the window shape in CI only.
           QA_TIME_ZONE: ${{ vars.QA_TIME_ZONE || 'America/Chicago' }}
         run: npx playwright test --grep @qa
 
-      # Site layout: / is production's frozen dashboard and report, /qa/ is this
-      # suite's live ones. SITE_DIR and PAGES_URL are env-driven, so /qa needs no
-      # script change — the build merges into <root>/qa/history.json. The frozen
-      # root is republished every time because a deploy replaces the whole site.
-      - name: Build history dashboard
+      # Runs even when QA failed — the two environments are reported
+      # independently, and a broken QA says nothing about UAT.
+      - name: Run UAT Playwright tests
+        id: uat-tests
         if: ${{ !cancelled() }}
+        continue-on-error: true
         env:
-          SITE_DIR: site/qa
-        run: |
-          node .github/scripts/build-dashboard.mjs
-          mkdir -p site/qa/report
-          cp -r playwright-report/. site/qa/report/ 2>/dev/null || true
-          node .github/scripts/preserve-prod-archive.mjs
+          SUITE: uat
+          UAT_BASE_URL: ${{ vars.UAT_BASE_URL || 'https://uat.kwant.ai' }}
+          # The QA pair by default — one account is authorised on both
+          # environments, so UAT needs no secrets of its own. Set the UAT_*
+          # secrets to point it at a different account. The production KWANT_*
+          # pair is still never passed to a monitoring step.
+          UAT_KWANT_EMAIL: ${{ secrets.UAT_KWANT_EMAIL || secrets.QA_KWANT_EMAIL }}
+          UAT_KWANT_PASSWORD: ${{ secrets.UAT_KWANT_PASSWORD || secrets.QA_KWANT_PASSWORD }}
+          UAT_TIME_ZONE: ${{ vars.UAT_TIME_ZONE || 'America/Chicago' }}
+        run: npx playwright test --grep @uat
 
-      - name: Upload HTML report
+      # Site layout: / is the index, /qa/ and /uat/ are the live dashboards and
+      # reports, /prod/ is production's frozen archive. SUITE drives both the
+      # input paths and the output subpath; PAGES_URL says which published
+      # archive to merge into. The frozen root is republished every time because
+      # a deploy replaces the whole site.
+      #
+      # These three steps, and the packaging and deploy steps further down, carry
+      # no `if:` on purpose, so they run only while nothing has failed: a
+      # dashboard build aborts rather than overwrite an archive it could not
+      # read, and if it does abort nothing may be deployed — publishing a site
+      # missing /qa/ or /uat/ would erase that environment's history for good.
+      # The artifact uploads in between are `!cancelled()`, so the reports
+      # survive even then.
+      - name: Build QA dashboard
+        env:
+          SUITE: qa
+          PAGES_URL: ${{ env.QA_PAGES_URL }}
+        run: node .github/scripts/build-dashboard.mjs
+
+      - name: Build UAT dashboard
+        env:
+          SUITE: uat
+          PAGES_URL: ${{ env.UAT_PAGES_URL }}
+        run: node .github/scripts/build-dashboard.mjs
+
+      - name: Publish frozen production archive and root index
+        run: node .github/scripts/preserve-prod-archive.mjs
+
+      - name: Upload HTML reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
-          path: playwright-report/
+          path: |
+            results/qa/report/
+            results/uat/report/
           retention-days: 30
 
-      # Belt-and-braces copy of the archive, in case a deploy is ever lost.
+      # Belt-and-braces copy of both archives, in case a deploy is ever lost.
       - name: Upload run history
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v4
         with:
           name: run-history
-          path: site/qa/history.json
+          path: |
+            site/qa/history.json
+            site/uat/history.json
           retention-days: 90
 
       - name: Package site for GitHub Pages
-        if: ${{ !cancelled() }}
         uses: actions/upload-pages-artifact@v3
         with:
           path: site/
@@ -110,22 +162,34 @@ jobs:
       # Non-blocking: a repo without Pages enabled still reports test results.
       - name: Deploy to GitHub Pages
         id: deployment
-        if: ${{ !cancelled() && github.event_name != 'pull_request' }}
         continue-on-error: true
         uses: actions/deploy-pages@v4
 
-      - name: Notify Slack on failure
-        if: ${{ !cancelled() && steps.tests.outcome == 'failure' }}
+      # One message per failing environment, each labelled by SUITE and linking
+      # to its own dashboard. deploy-pages only reports the site root, so the
+      # subpath is appended to it.
+      - name: Notify Slack on QA failure
+        if: ${{ !cancelled() && steps.qa-tests.outcome == 'failure' }}
         env:
+          SUITE: qa
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          # The QA dashboard, not the site root — deploy-pages only reports the
-          # root, so append /qa to it.
-          REPORT_URL: ${{ steps.deployment.outputs.page_url && format('{0}qa/', steps.deployment.outputs.page_url) || format('{0}/', env.PAGES_URL) }}
+          REPORT_URL: ${{ steps.deployment.outputs.page_url && format('{0}qa/', steps.deployment.outputs.page_url) || format('{0}/', env.QA_PAGES_URL) }}
+        run: node .github/scripts/slack-notify.mjs
+
+      - name: Notify Slack on UAT failure
+        if: ${{ !cancelled() && steps.uat-tests.outcome == 'failure' }}
+        env:
+          SUITE: uat
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          REPORT_URL: ${{ steps.deployment.outputs.page_url && format('{0}uat/', steps.deployment.outputs.page_url) || format('{0}/', env.UAT_PAGES_URL) }}
         run: node .github/scripts/slack-notify.mjs
 
       - name: Summarise
         if: ${{ !cancelled() }}
         run: |
-          echo "QA test outcome: ${{ steps.tests.outcome }}" >> $GITHUB_STEP_SUMMARY
-          echo "Dashboard: $PAGES_URL/" >> $GITHUB_STEP_SUMMARY
-          echo "Report: $PAGES_URL/report/" >> $GITHUB_STEP_SUMMARY
+          {
+            echo "| Environment | Outcome | Dashboard | Report |"
+            echo "| --- | --- | --- | --- |"
+            echo "| QA | ${{ steps.qa-tests.outcome }} | $QA_PAGES_URL/ | $QA_PAGES_URL/report/ |"
+            echo "| UAT | ${{ steps.uat-tests.outcome }} | $UAT_PAGES_URL/ | $UAT_PAGES_URL/report/ |"
+          } >> $GITHUB_STEP_SUMMARY

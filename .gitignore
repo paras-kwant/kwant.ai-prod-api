@@ -6,6 +6,8 @@
 node_modules/
 /test-results/
 /playwright-report/
+# Per-suite results, reports and API logs (SUITE=qa|uat).
+/results/
 /blob-report/
 /playwright/.cache/
 /playwright/.auth/

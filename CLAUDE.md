@@ -5,26 +5,36 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## What this is
 
 A Playwright **API** test suite (no browser, no UI) exercising the live production
-Kwant API at `https://app.kwant.ai/api`, plus two endpoints on QA at
-`https://qa.kwant.ai/api` (see [QA environment](#qa-environment)). There is no application
-code here — only specs that hit those environments directly. Treat every run as traffic
-against a live system.
+Kwant API at `https://app.kwant.ai/api`, plus the same two endpoints on QA at
+`https://qa.kwant.ai/api` and on UAT at `https://uat.kwant.ai/api` (see
+[QA environment](#qa-environment) and [UAT environment](#uat-environment)). There is no
+application code here — only specs that hit those environments directly. Treat every run
+as traffic against a live system.
 
 ## Commands
 
 ```bash
-npm run qa                                   # QA specs only — what CI runs
-npm run qa:pipeline                          # QA specs + build site/qa/ exactly as qa.yml does
-npm run qa:dashboard                         # the above, then serve it at localhost:8899/qa/
+npm run qa                                   # QA specs only
+npm run uat                                  # UAT specs only
+npm run pipeline                             # both suites + the whole site/, as qa.yml does
+npm run dashboard                            # the above, then serve it at localhost:8899/
+npm run qa:pipeline                          # one environment: its specs + its site/qa/ subtree
+npm run uat:pipeline                         # likewise, site/uat/
+npm run qa:dashboard                         # qa:pipeline, then serve at localhost:8899/qa/
+npm run uat:dashboard                        # uat:pipeline, then serve at localhost:8899/uat/
 npm run prod                                 # production specs only (live production traffic)
 ```
+
+The `*:pipeline` scripts are `SUITE=<env> npm run suite:pipeline` — see
+[Running two suites in one job](#running-two-suites-in-one-job-suite).
 
 Or invoke Playwright directly:
 
 ```bash
-npx playwright test                          # everything, QA and production
+npx playwright test                          # everything: production, QA and UAT
 npx playwright test --grep @qa               # QA only (the tag CI selects on)
-npx playwright test --grep-invert @qa        # production only
+npx playwright test --grep @uat              # UAT only
+npx playwright test --grep-invert '@qa|@uat' # production only
 npx playwright test getPins                  # by filename substring
 npx playwright test -g "RSW Terminal E"      # by test title
 npx playwright test --reporter=list          # see per-test console.log output
@@ -41,7 +51,12 @@ Read from `.env` (gitignored) via `dotenv` in [playwright.config.ts](playwright.
 `BASE_URL`, `KWANT_EMAIL`, `KWANT_PASSWORD`. Copy `.env.example` to start.
 Specs read `process.env.KWANT_EMAIL!` directly and fail on a login assertion if unset.
 
-CI has no `.env`; it reads `KWANT_EMAIL` / `KWANT_PASSWORD` from repository secrets.
+The monitored environments use the `QA_KWANT_*` pair — UAT falls back to it, and
+`UAT_KWANT_*` overrides only if you want a different account. Neither ever falls back to
+the production `KWANT_*` pair. See their sections below.
+
+CI has no `.env`; it reads every pair from repository secrets, and hands each one only to
+the step that needs it.
 
 ## API contract
 
@@ -132,6 +147,41 @@ window and response body — the message renders only on failure. Full bodies go
 report via `testInfo.attach`; console output is truncated because a successful `getPins`
 body is several MB.
 
+## Running two suites in one job (`SUITE`)
+
+QA and UAT run in the same CI job, one `npx playwright test` each. `SUITE` (`qa` | `uat`)
+is what keeps them apart, and it is read in four places —
+[playwright.config.ts](playwright.config.ts) (`results.json`, the HTML report,
+`outputDir`), [tests/apiLog.ts](tests/apiLog.ts) (the
+NDJSON log), [build-dashboard.mjs](.github/scripts/build-dashboard.mjs) (all three inputs
+plus `site/<suite>/`) and [slack-notify.mjs](.github/scripts/slack-notify.mjs) (which
+results to read, and the environment name in the message):
+
+| `SUITE` | results | HTML report | API log | published to |
+| --- | --- | --- | --- | --- |
+| unset | `test-results/results.json` | `playwright-report/` | `test-results/api-calls.ndjson` | `site/` |
+| `qa` | `results/qa/results.json` | `results/qa/report/` | `results/qa/api-calls.ndjson` | `site/qa/` |
+| `uat` | `results/uat/results.json` | `results/uat/report/` | `results/uat/api-calls.ndjson` | `site/uat/` |
+
+Unset — a bare `npx playwright test`, or `npm run prod` — keeps the original paths, so
+nothing about the production suite changed.
+
+Partitioning is not cosmetic: Playwright **wipes its output dir at the start of a run**, so
+with both suites writing to `test-results/` the UAT run would delete the QA results before
+the QA dashboard was built. Anything added that writes under `test-results/` has to take
+`SUITE` into account too.
+
+`build-dashboard.mjs` also copies the run's HTML report to `<site>/report/`, so CI and
+`npm run <env>:pipeline` produce byte-identical trees from the same code.
+
+[tests/globalSetup.ts](tests/globalSetup.ts) deletes the API call log once per run, before
+any worker starts. `recordApiCall` appends, and the log now sits *beside* the wiped output
+dir rather than inside it, so without this a second local run leaves the first run's calls
+in the file and the dashboard credits them all to the latest run. It must stay in
+`globalSetup` rather than `apiLog.ts`, which is imported once per worker — each worker would
+truncate the others' entries. CI never sees the difference (fresh checkout), which is the
+reason to keep it: a local build has to produce the dashboard CI produces.
+
 ## QA environment
 
 `https://qa.kwant.ai/api`, same API shape. **QA has its own credentials**:
@@ -189,12 +239,51 @@ production ones:
   Both specs assert the shape, not the counts — the counts move. A 15-day window answers in
   ~7s, unlike the `getPins` limit noted below.
 - Both specs are tagged **`@qa`** on their `describe`, which is how CI selects them:
-  `qa.yml` runs `--grep @qa`, `playwright.yml` runs `--grep-invert @qa`. Tagging beats
-  filtering on file names, which would need a case-sensitive match against
-  `qaFloorDetail.spec.ts` vs `floorDetail.spec.ts`.
-- The QA suite is the one **on a cadence** — see [CI](#ci). Slack and the dashboard label
-  these tests from the file name (`qaFloorDetail`, `qaWorkersOnPlan`) and from
-  `recordApiCall`'s `endpoint` (`qa floorDetail`, `qa workersOnPlan`).
+  `qa.yml` runs `--grep @qa` in its QA step, and `playwright.yml` runs
+  `--grep-invert '@qa|@uat'` to leave only the production specs. Tagging beats filtering on
+  file names, which would need a case-sensitive match against `qaFloorDetail.spec.ts` vs
+  `floorDetail.spec.ts`.
+- The QA suite is **on a nightly cadence**, alongside UAT — see [CI](#ci). Slack and the
+  dashboard label these tests from the file name (`qaFloorDetail`, `qaWorkersOnPlan`) and
+  from `recordApiCall`'s `endpoint` (`qa floorDetail`, `qa workersOnPlan`).
+
+## UAT environment
+
+`https://uat.kwant.ai/api`. A clone of the same environment QA runs against, so
+**everything but the host and the credentials is identical**: project `7801174067`
+("Frontier Data Center Project"), plan `7819255146`, `project-zone` →
+`America/Chicago`, and `GET /api/plan/mostActiveToday` resolves to that same plan. All
+verified against the live API, not assumed from QA.
+
+| Spec | Endpoint |
+| --- | --- |
+| [tests/uatFloorDetail.spec.ts](tests/uatFloorDetail.spec.ts) | `POST /api/floorDetail`, 14-day window |
+| [tests/uatWorkersOnPlan.spec.ts](tests/uatWorkersOnPlan.spec.ts) | `GET /api/locationplan/workersOnPlan` |
+
+Each is its QA counterpart with `QA_` swapped for `UAT_` and the base URL changed — same
+window modes, same `calendarDay` default, same shape-only assertions. The 14-day
+`calendarDay` window it sends is byte-identical to QA's
+(`2026-08-08T05:00:00Z -> 2026-08-22T04:59:00Z` on 2026-08-21), because the zone matches.
+Read the [QA environment](#qa-environment) notes for the reasoning behind all of it; only
+the differences are listed here:
+
+- **It shares QA's credentials.** `UAT_KWANT_EMAIL`/`UAT_KWANT_PASSWORD` override, but
+  unset the specs use the `QA_KWANT_*` pair — the QA account (`paras@kwant.ai`) is
+  authorised for this project on both environments, verified against the live API. So UAT
+  needs **no repository secrets of its own**; `qa.yml` passes
+  `secrets.UAT_KWANT_EMAIL || secrets.QA_KWANT_EMAIL` to its UAT step.
+  There is still **no fallback to `KWANT_*`** — a monitoring suite must fail rather than
+  log in with production credentials. If UAT is ever pointed at an account that is not
+  authorised for the project, the failure looks like QA's: HTTP 200 on login, then
+  `400 "User is not authorized to this resource"` on every call.
+- Overridable via `UAT_BASE_URL`, `UAT_PROJECT_ID`/`UAT_PLAN_ID` (which must move
+  together), `UAT_WINDOW_DAYS`, `UAT_WINDOW_MODE`, `UAT_TIME_ZONE`.
+- Tagged **`@uat`**, which is how CI selects it. Adding another tag means updating
+  `playwright.yml`'s `--grep-invert '@qa|@uat'` as well, or a production dispatch will
+  start firing at the new environment.
+- Slack and the dashboard label these from the file name (`uatFloorDetail`,
+  `uatWorkersOnPlan`) and from `recordApiCall`'s `endpoint` (`uat floorDetail`,
+  `uat workersOnPlan`). The Slack header reads `Kwant API (UAT)`, from `SUITE`.
 
 ## Known failures
 
@@ -230,27 +319,55 @@ It breaks between 3 and 5 days on every project. Keep windows at 3 days or under
 verbatim across the specs. Extracting `tests/helpers.ts` is a pending, behavior-neutral
 cleanup; until then, a change to the date format must be applied in every spec.
 
+The `uat*` specs are whole-file copies of the `qa*` ones for the same reason — the repo's
+convention is one self-contained spec per endpoint per environment. That makes four copies
+of the date helpers now, so the cleanup is worth more than it was; a change to the QA
+window logic almost certainly belongs in the UAT spec too.
+
 ## CI
 
-**QA is what runs on a schedule; production is on-demand only.**
+**QA and UAT are what run on a schedule; production is on-demand only.**
 
 | Workflow | Runs | Triggers | Publishes |
 | --- | --- | --- | --- |
-| [qa.yml](.github/workflows/qa.yml) | `--grep @qa` (QA specs) | push, PR, dispatch — plus every **15 min** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` (live) + `/prod/` (frozen) + the root index |
-| [playwright.yml](.github/workflows/playwright.yml) | `--grep-invert @qa` (production specs) | `workflow_dispatch` only | nothing — report as an artifact |
+| [qa.yml](.github/workflows/qa.yml) | `--grep @qa`, then `--grep @uat`, as two steps | `workflow_dispatch` only — every **15 min from 00:00 to 08:00 Asia/Kathmandu** via [qa-ticker.yml](.github/workflows/qa-ticker.yml) | `/qa/` + `/uat/` (live) + `/prod/` (frozen) + the root index |
+| [playwright.yml](.github/workflows/playwright.yml) | `--grep-invert '@qa\|@uat'` (production specs) | `workflow_dispatch` only | nothing — report as an artifact |
 
-`qa.yml` is a copy of `playwright.yml` with the QA env, the tag filter and the `/qa`
-subpath swapped in. Roughly **96 QA runs a day**, so `MAX_RUNS` at 200 covers about 50
-hours; raise it (and `CHART_RUNS`/`TABLE_ROWS`) if you want more.
+**Both monitored environments live in one workflow, and that is load-bearing.** A Pages
+deploy replaces the *entire* site, so whatever publishes must emit every live subtree in
+the same deploy; as two workflows, each deploy would delete the other environment's
+archive. The report tree cannot be recovered by fetching either, the way `history.json` is.
+Hence also: there is no way to run one environment and not the other from CI, and adding a
+third means another pair of steps in `qa.yml`, not another workflow.
+
+The file is still named `qa.yml` because [qa-ticker.yml](.github/workflows/qa-ticker.yml)
+dispatches it by name; renaming it means updating the ticker's `gh workflow run` too, and
+costs one dropped tick while the in-flight ticker still points at the old name.
+
+**32 runs a night** of each suite (00:00, 00:15 … 07:45 NPT), so `MAX_RUNS` at 200 covers
+about six nights per environment and `DETAIL_RUNS` at 30 keeps roughly one night of full
+response bodies; raise them (and `CHART_RUNS`/`TABLE_ROWS`) if you want more.
+
+**Nothing runs outside the window.** `qa.yml` is `workflow_dispatch`-only — `push` and
+`pull_request` were removed for the same reason `playwright.yml` dropped them: merging must
+not fire traffic at a monitored environment. So a change to the specs, the dashboard or the
+build scripts reaches the site only on the next nightly run; `gh workflow run qa.yml`
+publishes it immediately.
 
 `qa.yml` uses `concurrency: qa-playwright-<ref>`, and serialising is load-bearing: each run
-builds `history.json` by merging itself into the copy fetched from `/qa/history.json`, so
-two concurrent runs would each write back only their own. A run must finish inside the
-15-minute window; it takes about one.
+builds `history.json` by merging itself into the copy fetched from `/qa/history.json` and
+`/uat/history.json`, so two concurrent runs would each write back only their own. A run
+must finish inside the 15-minute window; two suites take about two minutes.
+
+A dashboard build **aborts** rather than overwrite an archive it could not read, and the
+packaging and deploy steps carry no `if:`, so an abort publishes nothing at all — the live
+site keeps both archives and the next run merges into them. Deploying a site missing `/qa/`
+or `/uat/` would erase that environment's history for good, so never loosen that: the
+artifact uploads are `!cancelled()`, the deploy is not.
 
 **Production no longer publishes to Pages.** A Pages deploy replaces the *entire* site, so a
-manual production dispatch would delete the `/qa/` archive. It uploads `playwright-report/`
-as an artifact instead, and holds its own concurrency group.
+manual production dispatch would delete the `/qa/` and `/uat/` archives. It uploads
+`playwright-report/` as an artifact instead, and holds its own concurrency group.
 
 Its dashboard and last report stay at **`/prod/`** (with `/prod/report/`), republished by
 [preserve-prod-archive.mjs](.github/scripts/preserve-prod-archive.mjs) on **every** QA build —
@@ -261,9 +378,11 @@ mean one failed request erases 85 runs for good (the deploy ships without them, 
 build finds nothing to copy). `frozen: true` in that history is what makes the page show a
 frozen banner instead of an "Updated" line.
 
-Tests run with `continue-on-error` and the job is **left green even when tests fail** —
-this is a monitoring pipeline, not a gate. Pass/fail lives on the dashboard and in Slack.
-No browser is installed — the `request` fixture never launches one.
+Both test steps run with `continue-on-error` and the job is **left green even when tests
+fail** — this is a monitoring pipeline, not a gate. The UAT step also carries
+`if: !cancelled()`, so a broken QA environment never stops UAT from being measured.
+Pass/fail lives on the dashboard and in Slack. No browser is installed — the `request`
+fixture never launches one.
 
 The production cadence was retired, not paused: `ticker.yml` was **deleted** and
 `playwright.yml` lost its `push`/`pull_request` triggers, so merging cannot fire traffic at
@@ -281,12 +400,36 @@ rather than queued. This is not fixable from the workflow file.
 [.github/workflows/qa-ticker.yml](.github/workflows/qa-ticker.yml) drives the cadence
 instead. It holds a runner for ~55 minutes, sleeping to each `:00/:15/:30/:45`
 boundary and firing `gh workflow run qa.yml`, then re-dispatches **itself**. The chain, not a
-cron, is what keeps the interval. Notes for anyone changing it:
+cron, is what keeps the interval.
+
+The **nightly window lives in the script, not the cron**: `WINDOW_TZ` (`Asia/Kathmandu`),
+`WINDOW_START_HOUR` (0) and `WINDOW_END_HOUR` (8, exclusive — the last dispatch is 07:45)
+are its only definition, so moving it needs no cron edit. GitHub's cron is UTC-only and
+could not express `+5:45` anyway. That leaves the hourly cron doing two jobs: starting the
+chain each night and restarting one a dead runner broke. Outside the window a tick exits in
+seconds, so the 16 daytime ones cost almost nothing. Three properties are load-bearing, and
+a simulated night against a virtual clock confirmed all of them (exactly 32 dispatches,
+00:00 through 07:45, none outside, chain terminating):
+
+- The start check looks **ahead**, not at "now": a run may begin before the window opens and
+  sleep into it. That is what covers a zone whose offset is not a whole hour — at `+5:45`
+  the 18:00 UTC tick starts at 23:45 NPT, and without the look-ahead the 00:00, 00:15 and
+  00:30 dispatches would all be lost.
+- Re-arming is **conditional** on a boundary in the next hour still being in-window.
+  Unconditional re-arming would spin: outside the window each run exits in seconds and would
+  immediately start another, all day.
+- A failed `gh workflow run` is non-fatal (`|| echo "::warning::…"`), so one refused dispatch
+  cannot end the night's chain — and the step deliberately does not use `set -e`, so the
+  re-arm decision at the end is always reached.
+
+Notes for anyone changing it:
 
 - `workflow_dispatch` and `repository_dispatch` are the only two events `GITHUB_TOKEN` may
   trigger from inside a run, so no PAT is needed. Any other event would need one.
-- Its `cron: '0 * * * *'` is a **recovery net** for a chain broken by a dead runner, not the
-  schedule. Don't read it as the real cadence.
+- Its `cron: '0 * * * *'` is the nightly **starter** and a recovery net for a chain broken by
+  a dead runner — not the schedule. Don't read it as the real cadence. Its one gap: if the
+  chain dies inside the final 15 minutes, the cron tick at 02:00 UTC (07:45 NPT) finds no
+  remaining in-window boundary and that single dispatch is lost.
 - `concurrency: qa-ticker` is load-bearing. GitHub keeps at most one *pending* run per group
   and cancels the rest, which is what stops the cron net and the self-rearm from compounding
   into overlapping tickers that double-fire the suite.
@@ -297,35 +440,46 @@ cron, is what keeps the interval. Notes for anyone changing it:
   `GH_REPO`.
 
 [.github/scripts/slack-notify.mjs](.github/scripts/slack-notify.mjs) reads
-`test-results/results.json` and posts failures grouped by endpoint, each with project name,
-project id, status code and the full request URL. It exits silently when everything passes.
+`results.json` (which one is set by `SUITE`) and posts failures grouped by endpoint, each
+with project name, project id, status code and the full request URL. It exits silently when
+everything passes. `qa.yml` invokes it **once per failing environment**, and `SUITE` puts
+the name in the header (`Kwant API (UAT) — test failures`) — both suites post to the same
+webhook, so without it two messages would be indistinguishable.
 Project ids reach Slack through the **test titles** — `` test(`${project.name} (${project.id})`) `` —
 so keep that shape when adding specs.
 
-Required secrets: `QA_KWANT_EMAIL`, `QA_KWANT_PASSWORD` (the scheduled QA suite) and
-`SLACK_WEBHOOK_URL`; `KWANT_EMAIL`, `KWANT_PASSWORD` for the on-demand production suite.
-The two pairs are never both handed to the same job. Optional repo variables: `BASE_URL`,
-`QA_BASE_URL`, `QA_TIME_ZONE`, `REPORT_URL` (adds an "Open report" button).
+Required secrets: `QA_KWANT_EMAIL`/`QA_KWANT_PASSWORD` (which serve **both** scheduled
+suites) plus `SLACK_WEBHOOK_URL`; `KWANT_EMAIL`/`KWANT_PASSWORD` for the on-demand
+production suite. Optional: `UAT_KWANT_EMAIL`/`UAT_KWANT_PASSWORD`, only to point UAT at a
+different account. The production pair is never handed to a monitoring step. Optional repo
+variables: `BASE_URL`, `QA_BASE_URL`, `QA_TIME_ZONE`, `UAT_BASE_URL`, `UAT_TIME_ZONE`,
+`REPORT_URL` (adds an "Open report" button).
 
 Passing `--reporter=list` on the CLI overrides the configured reporters and skips writing
 `results.json`, which the Slack script needs.
 
 ## History dashboard
 
-Two dashboards share one Pages site:
+Three dashboards share one Pages site:
 
 | Path | Contents |
 | --- | --- |
-| `/` | index listing both, from [dashboard/root.html](.github/dashboard/root.html) |
-| `/qa/` + `/qa/report/` | QA, live, refreshed every 15 minutes |
+| `/` | index listing all three, from [dashboard/root.html](.github/dashboard/root.html) |
+| `/qa/` + `/qa/report/` | QA, live, refreshed every 15 min, 00:00-08:00 NPT |
+| `/uat/` + `/uat/report/` | UAT, live, same run and cadence as QA |
 | `/prod/` + `/prod/report/` | production, frozen at its last run (2026-08-14, 85 runs) |
 
-Each page header links to the other and to its own Playwright report. Slack links to `/qa/`.
+All three serve the **same** [dashboard/index.html](.github/dashboard/index.html). It knows
+which one it is from `env` in `history.json` (`qa` | `uat` | `prod`), which is what labels
+the header and builds the links to the other two — so the page stays copyable to a new
+mount point without editing it. The frozen production archive predates that field, so the
+page falls back to `frozen ? 'prod' : 'qa'`; `preserve-prod-archive.mjs` now stamps
+`env: 'prod'` in as well. Slack links to the failing environment's own dashboard.
 
-The `/qa` subpath needs no code in the build script: `SITE_DIR=site/qa` sets where it writes
-and `PAGES_URL=<root>/qa` sets which archive it merges into, both already env-driven. The
+Neither subpath needs code in the build script: `SUITE` sets both where it writes
+(`site/<suite>`) and, with `PAGES_URL=<root>/<suite>`, which archive it merges into. The
 page fetches `./history.json` and links `./report/` relatively, so it works at any mount
-point. `npm run qa:pipeline` builds the identical tree locally.
+point. `npm run pipeline` builds the identical tree locally.
 
 [.github/scripts/build-dashboard.mjs](.github/scripts/build-dashboard.mjs) merges the
 current run into `history.json` and keeps the last 200 (`MAX_RUNS`). **Previous history is fetched from

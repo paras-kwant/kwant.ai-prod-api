@@ -6,7 +6,14 @@
  */
 import { readFileSync } from 'node:fs';
 
-const RESULTS_FILE = process.env.RESULTS_FILE ?? 'test-results/results.json';
+// SUITE (`qa` | `uat`) points at that suite's results and labels the message —
+// both suites post to the same webhook, so the header has to say which one.
+const SUITE = (process.env.SUITE ?? '').trim();
+const RESULTS_FILE =
+  process.env.RESULTS_FILE ??
+  (SUITE ? `results/${SUITE}/results.json` : 'test-results/results.json');
+const SUITE_LABEL = process.env.SUITE_LABEL || (SUITE ? SUITE.toUpperCase() : '');
+const TITLE = SUITE_LABEL ? `Kwant API (${SUITE_LABEL})` : 'Kwant API';
 const WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 const MAX_FAILURES_SHOWN = 12;
 
@@ -157,11 +164,11 @@ const actions = [
 ];
 
 const payload = {
-  text: `${failures.length} of ${total} Kwant API tests failed`,
+  text: `${failures.length} of ${total} ${TITLE} tests failed`,
   blocks: [
     {
       type: 'header',
-      text: { type: 'plain_text', text: '🔴  Kwant API — test failures', emoji: true },
+      text: { type: 'plain_text', text: `🔴  ${TITLE} — test failures`, emoji: true },
     },
     {
       type: 'section',
@@ -201,7 +208,9 @@ const payload = {
   ],
 };
 
-console.log(`${failures.length} of ${total} API tests failed (${passed} passed, ${duration}):`);
+console.log(
+  `${failures.length} of ${total} ${TITLE} tests failed (${passed} passed, ${duration}):`
+);
 for (const { endpoint, items } of shown) {
   console.log(`  ${endpoint}`);
   for (const f of items) {
